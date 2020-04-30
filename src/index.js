@@ -5,15 +5,15 @@ const server = http.createServer(app)
 const socketio = require('socket.io')
 const Filter = require('bad-words')
 const io = socketio(server)
-const { generateMessage, generateLocationMessage } = require('./utils/messages')
+const { generateMessage } = require('./utils/messages')
 const {
   addUser,
   removeUser,
   getUser,
-  getUsersInRoom
+  getUsersInRoom,
 } = require('./utils/users')
 
-io.on('connection', socket => {
+io.on('connection', (socket) => {
   socket.on('join', ({ username, room }, callback) => {
     const { error, user } = addUser({ id: socket.id, username, room })
 
@@ -30,7 +30,7 @@ io.on('connection', socket => {
 
     io.to(user.room).emit('roomData', {
       room: user.room,
-      users: getUsersInRoom(user.room)
+      users: getUsersInRoom(user.room),
     })
 
     callback()
@@ -48,19 +48,6 @@ io.on('connection', socket => {
     callback()
   })
 
-  socket.on('sendLocation', (coords, callback) => {
-    const user = getUser(socket.id)
-
-    io.to(user.room).emit(
-      'locationMessage',
-      generateLocationMessage(
-        user.username,
-        `https://google.com/maps?q=${coords.latitude},${coords.longitude}`
-      )
-    )
-    callback()
-  })
-
   socket.on('disconnect', () => {
     const user = removeUser(socket.id)
 
@@ -72,7 +59,7 @@ io.on('connection', socket => {
 
       io.to(user.room).emit('roomData', {
         room: user.room,
-        users: getUsersInRoom(user.room)
+        users: getUsersInRoom(user.room),
       })
     }
   })

@@ -4,20 +4,16 @@ const socket = io()
 const $messageForm = document.querySelector('#message-form')
 const $messageFormInput = $messageForm.querySelector('input')
 const $messageFormButton = $messageForm.querySelector('button')
-const $sendLocationButton = document.querySelector('#send-location')
 const $messages = document.querySelector('#messages')
 const $sidebar = document.querySelector('#sidebar')
 
 // Templates
 const messageTemplate = document.querySelector('#message-template').innerHTML
-const locationMessageTemplate = document.querySelector(
-  '#location-message-template'
-).innerHTML
 const sidebarTemplate = document.querySelector('#sidebar-template').innerHTML
 
 // Options
 const { username, room } = Qs.parse(location.search, {
-  ignoreQueryPrefix: true
+  ignoreQueryPrefix: true,
 })
 
 const autoScroll = () => {
@@ -43,21 +39,11 @@ const autoScroll = () => {
   }
 }
 
-socket.on('message', message => {
+socket.on('message', (message) => {
   const html = Mustache.render(messageTemplate, {
     username: message.username,
     message: message.text,
-    createdAt: moment(message.createdAt).format('h:mm a')
-  })
-  $messages.insertAdjacentHTML('beforeend', html)
-  autoScroll()
-})
-
-socket.on('locationMessage', message => {
-  const html = Mustache.render(locationMessageTemplate, {
-    username: message.username,
-    url: message.url,
-    createdAt: moment(message.createdAt).format('h:mm a')
+    createdAt: moment(message.createdAt).format('h:mm a'),
   })
   $messages.insertAdjacentHTML('beforeend', html)
   autoScroll()
@@ -66,18 +52,18 @@ socket.on('locationMessage', message => {
 socket.on('roomData', ({ room, users }) => {
   const html = Mustache.render(sidebarTemplate, {
     room,
-    users
+    users,
   })
   $sidebar.innerHTML = html
 })
 
-$messageForm.addEventListener('submit', e => {
+$messageForm.addEventListener('submit', (e) => {
   e.preventDefault()
 
   $messageFormButton.setAttribute('disabled', 'disabled')
 
   const message = e.target.elements.message.value
-  socket.emit('sendMessage', message, error => {
+  socket.emit('sendMessage', message, (error) => {
     $messageFormButton.removeAttribute('disabled')
     $messageFormInput.value = ''
     $messageFormInput.focus()
@@ -90,26 +76,7 @@ $messageForm.addEventListener('submit', e => {
   })
 })
 
-$sendLocationButton.addEventListener('click', () => {
-  if (!navigator.geolocation) {
-    return alert('geolocation not supported by your browser')
-  }
-
-  $sendLocationButton.setAttribute('disabled', 'disabled')
-
-  navigator.geolocation.getCurrentPosition(position => {
-    const coords = {
-      latitude: position.coords.latitude,
-      longitude: position.coords.longitude
-    }
-    socket.emit('sendLocation', coords, () => {
-      $sendLocationButton.removeAttribute('disabled')
-      console.log('Location shared!')
-    })
-  })
-})
-
-socket.emit('join', { username, room }, error => {
+socket.emit('join', { username, room }, (error) => {
   if (error) {
     alert(error)
     location.href = '/'

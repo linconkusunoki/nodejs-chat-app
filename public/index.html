@@ -6,7 +6,7 @@
     <meta http-equiv="X-UA-Compatible" content="ie=edge" />
     <title>Chat App</title>
     <link rel="shortcut icon" href="/img/favicon.png" type="image/x-icon" />
-    <link rel="stylesheet" href="/css/styles.min.css" />
+    <link rel="stylesheet" href="/css/styles.css" />
   </head>
   <body>
     <div class="centered-form">
@@ -22,7 +22,12 @@
           />
 
           <label>Room</label>
-          <input type="text" name="room" placeholder="Room" required />
+          <select name="room">
+            <option value="">Pick a room</option>
+            <option value="js">JavaScript</option>
+            <option value="css">CSS</option>
+            <option value="html">HTML</option>
+          </select>
 
           <button>Join</button>
         </form>

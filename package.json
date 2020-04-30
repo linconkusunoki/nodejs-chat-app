@@ -13,9 +13,9 @@
     "bad-words": "^3.0.3",
     "express": "^4.17.1",
     "moment": "^2.24.0",
-    "socket.io": "^2.2.0"
+    "socket.io": "^2.3.0"
   },
   "devDependencies": {
-    "nodemon": "^1.19.1"
+    "nodemon": "^2.0.3"
   }
 }
