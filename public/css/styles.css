@@ -377,6 +377,73 @@ button:disabled {
   grid-template-columns: 28px minmax(0, 1fr);
   gap: 12px;
   margin-bottom: 4px;
+  position: relative;
+}
+
+/* Overlaid rather than added to the grid: the two-column layout plus the
+   right-aligned own-message header leave no third column to put it in. */
+.msg__tools {
+  position: absolute;
+  top: -4px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.msg:not(.msg--own) .msg__tools {
+  right: 0;
+}
+
+.msg--own .msg__tools {
+  left: 0;
+}
+
+.msg:hover .msg__tools,
+.msg:focus-within .msg__tools {
+  opacity: 1;
+}
+
+/* No hover on touch, so the control has to be visible already. */
+@media (hover: none) {
+  .msg__tools {
+    opacity: 1;
+  }
+}
+
+.msg__tool {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.msg__tool:hover {
+  background: var(--bg-input);
+  color: var(--text);
+}
+
+.msg__tool svg {
+  width: 15px;
+  height: 15px;
+}
+
+.msg__icon-done {
+  display: none;
+  color: var(--brand);
+}
+
+.msg__tool.is-copied .msg__icon-copy {
+  display: none;
+}
+
+.msg__tool.is-copied .msg__icon-done {
+  display: block;
 }
 
 .msg:not(.msg--grouped) {

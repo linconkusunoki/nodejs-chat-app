@@ -166,6 +166,7 @@ socket.on('message', (message) => {
     : Mustache.render(messageTemplate, {
         username: message.username,
         message: message.text,
+        id: message.id,
         initials: initials(author),
         hue: hue(author),
         own: author === username,
@@ -269,6 +270,30 @@ $messageFormInput.addEventListener(
   'input',
   throttle(() => socket.emit('userTyping'), 1500)
 )
+
+// Copy reads the rendered text straight out of the DOM, so there is no second
+// id-to-text map on the client to keep in step with the thread.
+$thread.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-copy]')
+  if (!button) return
+
+  const text = button.closest('.msg')?.querySelector('.msg__text')?.textContent
+  if (!text) return
+
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    return
+  }
+
+  button.classList.add('is-copied')
+  button.setAttribute('aria-label', 'Copied')
+
+  setTimeout(() => {
+    button.classList.remove('is-copied')
+    button.setAttribute('aria-label', 'Copy message')
+  }, 1200)
+})
 
 $messageForm.addEventListener('submit', (e) => {
   e.preventDefault()

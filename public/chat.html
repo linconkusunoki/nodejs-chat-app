@@ -80,7 +80,10 @@
     </div>
 
     <script id="message-template" type="text/html">
-      <article class="msg{{#own}} msg--own{{/own}}{{#grouped}} msg--grouped{{/grouped}}">
+      <article
+        class="msg{{#own}} msg--own{{/own}}{{#grouped}} msg--grouped{{/grouped}}"
+        data-id="{{ id }}"
+      >
         <div class="avatar msg__avatar" style="--hue: {{ hue }}" aria-hidden="true">
           {{ initials }}
         </div>
@@ -92,6 +95,33 @@
             <time class="msg__time">{{ createdAt }}</time>
           </div>
           <div class="msg__text">{{ message }}</div>
+        </div>
+        <div class="msg__tools">
+          <button class="msg__tool" type="button" data-copy aria-label="Copy message">
+            <svg
+              class="msg__icon-copy"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="9" y="9" width="12" height="12" rx="2" />
+              <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+            </svg>
+            <svg
+              class="msg__icon-done"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.4"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="m4 12 5 5L20 6" />
+            </svg>
+          </button>
         </div>
       </article>
     </script>
