@@ -66,6 +66,14 @@ const waitForMessages = async (messages: ChatMessage[], count: number) => {
   assert.ok(messages.length >= count, `expected ${count} messages, got ${messages.length}`)
 }
 
+// Assert an event never arrives. Racing a short window is clearer than waiting
+// out nextEvent's 5s timeout, and keeps the suite fast.
+const expectNoEvent = async (socket: Socket, event: string, ms = 300) => {
+  const arrived = new Promise((resolve) => socket.once(event, resolve))
+  const silent = await Promise.race([arrived.then(() => false), sleep(ms).then(() => true)])
+  assert.ok(silent, `expected no '${event}' event`)
+}
+
 before(startServer)
 after(() => server?.kill())
 
@@ -192,6 +200,34 @@ test('every message carries a unique id', async (t) => {
 
   assert.ok((await first).id)
   assert.notStrictEqual((await first).id, (await second).id)
+})
+
+test('userTyping reaches the room but not the sender', async (t) => {
+  const alice = await connect()
+  const bob = await connect()
+  t.after(() => [alice, bob].forEach((s) => s.close()))
+
+  await emit(alice, 'join', { username: 'alice', room: 'typing-room' })
+  await emit(bob, 'join', { username: 'bob', room: 'typing-room' })
+
+  const heardByAlice = nextEvent<{ username: string }>(alice, 'userTyping')
+  bob.emit('userTyping')
+
+  assert.strictEqual((await heardByAlice).username, 'bob')
+  // socket.to() excludes the sender; the typist already knows they are typing.
+  await expectNoEvent(bob, 'userTyping')
+})
+
+test('userTyping from a socket that never joined is ignored', async (t) => {
+  const alice = await connect()
+  const orphan = await connect()
+  t.after(() => [alice, orphan].forEach((s) => s.close()))
+
+  await emit(alice, 'join', { username: 'alice', room: 'typing-guard' })
+  orphan.emit('userTyping')
+
+  // No room for the orphan, so there is nothing to broadcast into.
+  await expectNoEvent(alice, 'userTyping')
 })
 
 test('/health returns 200', async () => {

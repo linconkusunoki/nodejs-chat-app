@@ -71,6 +71,13 @@ export const registerSocketHandlers = (io: Server) => {
       ack?.()
     })
 
+    socket.on('userTyping', () => {
+      const user = requireUser()
+      if (!user) return
+      // toOthers, not to(): the typist already knows they are typing.
+      socket.to(user.room).emit('userTyping', { username: user.username })
+    })
+
     socket.on('disconnect', () => {
       const user = removeUser(socket.id)
       if (!user) return

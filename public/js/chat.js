@@ -10,6 +10,7 @@ const $messageFormInput = $messageForm.querySelector('input')
 const $messageFormButton = $messageForm.querySelector('button')
 const $messages = document.querySelector('#messages')
 const $thread = document.querySelector('#thread')
+const $typing = document.querySelector('#typing')
 const $sidebar = document.querySelector('#sidebar')
 const $status = document.querySelector('#status')
 
@@ -55,6 +56,16 @@ const username = String(options.username ?? '')
 const ADMIN = 'admin'
 
 const initials = (name) => name.slice(0, 2).toUpperCase()
+
+const throttle = (fn, ms) => {
+  let last = 0
+  return () => {
+    const now = Date.now()
+    if (now - last < ms) return
+    last = now
+    fn()
+  }
+}
 
 const hue = (name) => {
   let hash = 0
@@ -128,6 +139,59 @@ socket.on('roomData', ({ room: roomName, users }) => {
   $sidebar.innerHTML = html
   $roomTitle.textContent = roomName
 })
+
+// Typing indicator. The client throttles its own emits and the server only
+// relays; expiry is a client timer, so a typing user who closes the tab stops
+// showing up without the server needing to track anyone's keystrokes.
+const TYPING_TTL = 3000
+const typing = new Map()
+
+const renderTyping = () => {
+  const now = Date.now()
+  for (const [name, last] of typing) {
+    if (now - last >= TYPING_TTL) typing.delete(name)
+  }
+
+  const names = [...typing.keys()].sort()
+  if (!names.length) {
+    $typing.textContent = ''
+    $typing.hidden = true
+    return
+  }
+
+  const who =
+    names.length === 1
+      ? `${names[0]} is typing`
+      : names.length === 2
+        ? `${names[0]} and ${names[1]} are typing`
+        : `${names[0]} and ${names.length - 1} others are typing`
+
+  $typing.textContent = `${who}…`
+  $typing.hidden = false
+
+  setTimeout(renderTyping, TYPING_TTL)
+}
+
+socket.on('userTyping', ({ username: who }) => {
+  typing.set(who, Date.now())
+  renderTyping()
+})
+
+// Sending or dropping means they stopped typing; the TTL alone would leave a
+// stale "is typing" on screen for three seconds.
+const clearTyping = () => {
+  if (!typing.size) return
+  typing.clear()
+  renderTyping()
+}
+
+socket.on('message', clearTyping)
+socket.on('disconnect', clearTyping)
+
+$messageFormInput.addEventListener(
+  'input',
+  throttle(() => socket.emit('userTyping'), 1500)
+)
 
 $messageForm.addEventListener('submit', (e) => {
   e.preventDefault()
