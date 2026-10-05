@@ -416,6 +416,9 @@ button:disabled {
   place-items: center;
   width: 26px;
   height: 26px;
+  /* Without this the 11px/18px from the base button rule is larger than the box
+     itself, which pushes the icon off-centre and clips it. */
+  padding: 0;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -519,6 +522,12 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: 10px;
   width: fit-content;
+}
+
+/* An author `display` beats the UA stylesheet's [hidden] rule, so the picker
+   needs this explicitly or it never hides. */
+.msg__picker[hidden] {
+  display: none;
 }
 
 .msg--own .msg__picker {

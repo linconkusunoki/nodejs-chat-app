@@ -65,7 +65,16 @@ const setDrawer = (open) => {
 $menuToggle.addEventListener('click', () => setDrawer(!$chat.classList.contains('is-open')))
 $scrim.addEventListener('click', () => setDrawer(false))
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') setDrawer(false)
+  if (e.key === 'Escape') {
+    setDrawer(false)
+    closePickers()
+  }
+})
+
+// A picker is a transient popover: any click outside a message dismisses it, so
+// it cannot sit over the thread while you read.
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.msg')) closePickers()
 })
 
 // Templates
@@ -221,15 +230,32 @@ const renderReactions = (message) => {
     chips.join('') + '<button class="chip chip--add" type="button" data-add-reaction>+</button>'
 }
 
-const togglePicker = (article) => {
-  const picker = article?.querySelector('[data-picker]')
-  if (!picker) return
+const closePickers = (except) => {
+  for (const picker of $thread.querySelectorAll('[data-picker]')) {
+    if (picker !== except) picker.hidden = true
+  }
+}
 
+// Emojis come from roomData, which lands after the first messages have already
+// rendered, so the list is filled at open time rather than at render time.
+const fillPicker = (picker) => {
   picker.innerHTML = pickerEmoji
     .map(
       (emoji) => `<button class="msg__emoji" type="button" data-emoji="${emoji}">${emoji}</button>`
     )
     .join('')
+}
+
+const togglePicker = (article) => {
+  const picker = article?.querySelector('[data-picker]')
+  if (!picker) return
+
+  // One open at a time. Several stacked over a long thread read as a bug, and
+  // picking an emoji is expected to dismiss the row it was picked from.
+  if (picker.hidden) {
+    fillPicker(picker)
+    closePickers(picker)
+  }
   picker.hidden = !picker.hidden
 }
 
@@ -237,9 +263,7 @@ $thread.addEventListener('click', (event) => {
   const chosen = event.target.closest('[data-reaction], [data-emoji]')
   if (chosen) {
     const article = chosen.closest('.msg')
-    const picker = article?.querySelector('[data-picker]')
-    if (picker) picker.hidden = true
-
+    closePickers()
     socket.emit('toggleReaction', {
       id: article?.dataset.id,
       emoji: chosen.dataset.reaction ?? chosen.dataset.emoji,

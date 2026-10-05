@@ -43,11 +43,14 @@ await new Promise((r) =>
 )
 
 const profile = `/tmp/cdp-smoke-profile-${process.pid}`
+// Per-run, not the usual 9222: a Chrome left over from an interrupted run keeps
+// that port and this script would hang forever waiting on it.
+const debugPort = 9300 + (process.pid % 400)
 const chrome = spawn(
   CHROME,
   [
     '--headless=new',
-    '--remote-debugging-port=9222',
+    `--remote-debugging-port=${debugPort}`,
     `--user-data-dir=${profile}`,
     '--no-first-run',
     '--no-default-browser-check',
@@ -58,7 +61,9 @@ const chrome = spawn(
 await sleep(2500)
 
 // Minimal CDP client over Node's global WebSocket.
-const { webSocketDebuggerUrl } = await (await fetch('http://127.0.0.1:9222/json/version')).json()
+const { webSocketDebuggerUrl } = await (
+  await fetch(`http://127.0.0.1:${debugPort}/json/version`)
+).json()
 const ws = new WebSocket(webSocketDebuggerUrl)
 await new Promise((r) => (ws.onopen = r))
 
@@ -214,7 +219,40 @@ console.log(`      (clipboard readback: ${JSON.stringify(copied.value?.text)})`)
 const own = await evaluate(bob, `!!document.querySelector('.msg--own')`)
 check('own message gets own class', own.value === true)
 
-// --- reactions: open the picker, react, chip appears with the right count
+// The message tools inherit padding: 11px 18px from the base button rule, which
+// is wider than the 26px box and pushes the icon off-centre.
+const toolBox = await evaluate(
+  bob,
+  `(() => { const t = document.querySelector('.msg [data-copy]');
+     const svg = t.querySelector('svg');
+     const tb = t.getBoundingClientRect(), sb = svg.getBoundingClientRect();
+     return { pad: getComputedStyle(t).paddingLeft,
+              dx: +(sb.left + sb.width / 2 - (tb.left + tb.width / 2)).toFixed(2),
+              dy: +(sb.top + sb.height / 2 - (tb.top + tb.height / 2)).toFixed(2) } })()`
+)
+check('tool button padding reset', toolBox.value?.pad === '0px', JSON.stringify(toolBox))
+check(
+  'tool icon is centred in its button',
+  Math.abs(toolBox.value?.dx ?? 99) < 0.5 && Math.abs(toolBox.value?.dy ?? 99) < 0.5,
+  JSON.stringify(toolBox)
+)
+
+// --- reactions: the picker starts closed, opens, reacts, and closes again
+// The picker is display:flex in CSS, which overrides the UA [hidden] rule, so it
+// needs its own guard — otherwise it sits empty under every message and the
+// first click of "+" appears to do nothing.
+const pickerRest = await evaluate(
+  alice,
+  `(() => { const p = document.querySelector('.msg [data-picker]');
+     return { hidden: p.hidden, display: getComputedStyle(p).display } })()`
+)
+check('picker is hidden before first use', pickerRest.value?.hidden === true)
+check(
+  'picker is not laid out while hidden',
+  pickerRest.value?.display === 'none',
+  JSON.stringify(pickerRest)
+)
+
 await evaluate(alice, `document.querySelector('.msg [data-add-reaction]').click()`)
 await sleep(200)
 const pickerOpen = await evaluate(
@@ -235,6 +273,47 @@ await evaluate(
      p.querySelector('[data-emoji="👍"]').click(); return 1 })()`
 )
 await sleep(500)
+check(
+  'picker closes once a reaction is picked',
+  (await evaluate(alice, `document.querySelector('.msg [data-picker]').hidden`)).value === true
+)
+
+// Opening a second picker must dismiss the first, or several float over the thread.
+// Needs two reacted-to messages to be meaningful.
+await typeInto(alice, 'a second message to react to')
+await submit(alice)
+await sleep(400)
+const twoPickers = await evaluate(
+  alice,
+  `(() => { const rows = [...document.querySelectorAll('.msg')]
+       .filter((m) => m.querySelector('[data-add-reaction]'));
+     if (rows.length < 2) return { need: rows.length };
+     rows[0].querySelector('[data-add-reaction]').click();
+     const firstOpen = document.querySelectorAll('.msg [data-picker]:not([hidden])').length;
+     rows[1].querySelector('[data-add-reaction]').click();
+     return { need: rows.length, firstOpen,
+              open: document.querySelectorAll('.msg [data-picker]:not([hidden])').length,
+              which: [...document.querySelectorAll('.msg')]
+                 .findIndex((m) => m.querySelector('[data-picker]:not([hidden])')) }; })()`
+)
+check(
+  'only one picker open at a time',
+  twoPickers.value?.need >= 2 &&
+    twoPickers.value?.firstOpen === 1 &&
+    twoPickers.value?.open === 1 &&
+    twoPickers.value?.which === 1,
+  JSON.stringify(twoPickers)
+)
+
+// Clicking outside any message dismisses it.
+await evaluate(alice, `document.querySelector('#room-title').click()`)
+await sleep(150)
+check(
+  'outside click closes the picker',
+  (await evaluate(alice, `document.querySelectorAll('.msg [data-picker]:not([hidden])').length`))
+    .value === 0
+)
+
 const chip = await evaluate(
   alice,
   `(() => { const c = document.querySelector('.msg .chip--mine');
@@ -284,6 +363,10 @@ check('no script injected via message text', injected.value === 0, `got ${inject
 // bob has two own messages by now ('hello from bob' and the xss-check 'hi'), so
 // always target the last one explicitly rather than relying on order.
 const ownSel = `[...document.querySelectorAll('.msg--own')].pop()`
+
+// Captured before the edit so the "did alice see it" check can address the same
+// message by id instead of by text.
+const bobOwnId = (await evaluate(bob, `${ownSel}.dataset.id`)).value
 
 const ownTools = await evaluate(
   bob,
@@ -336,10 +419,12 @@ check('edit applied', afterEdit.value?.text === 'edited text', JSON.stringify(af
 check('edit input removed after save', afterEdit.value?.input === false)
 check('edited marker shown', afterEdit.value?.editedShown === true)
 
-// the edit propagates to the other user
+// the edit propagates to the other user. Matched on the original text rather
+// than on position, so posting more messages earlier cannot redirect the check.
 const aliceSees = await evaluate(
   alice,
-  `(() => { const m = [...document.querySelectorAll('.msg')].find(x => x.querySelector('.msg__text')?.textContent !== 'hello from bob');
+  `(() => { const m = [...document.querySelectorAll('.msg')]
+       .find((x) => x.dataset.id === ${JSON.stringify(bobOwnId)});
      return m && { text: m.querySelector('.msg__text').textContent,
                    editedShown: !m.querySelector('[data-edited]').hidden } })()`
 )
