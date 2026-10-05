@@ -2,27 +2,32 @@
   "name": "chat-app",
   "version": "1.0.0",
   "description": "Chat App developed with NodeJS and Socket.io",
-  "author": "Lincon Kusunoki",
   "license": "MIT",
-  "engines": {
-    "node": ">=20"
-  },
+  "author": "Lincon Kusunoki",
+  "type": "module",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "nodemon src/index.js",
-    "test": "node --test test/*.test.js",
-    "lint": "eslint . && prettier --check ."
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test test/*.test.ts",
+    "lint": "oxlint && oxfmt --check .",
+    "format": "oxfmt ."
   },
   "dependencies": {
     "bad-words": "^4.1.5",
     "express": "^5.2.1",
-    "socket.io": "^4.8.4"
+    "socket.io": "^4.8.4",
+    "tsx": "^4.23.15"
   },
   "devDependencies": {
-    "eslint": "^9.39.5",
-    "globals": "^17.13.0",
-    "nodemon": "^2.0.3",
-    "prettier": "^3.9.9",
-    "socket.io-client": "^4.8.4"
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.4",
+    "oxfmt": "^0.71.0",
+    "oxlint": "^1.86.0",
+    "socket.io-client": "^4.8.4",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

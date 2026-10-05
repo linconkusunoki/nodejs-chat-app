@@ -20,6 +20,19 @@ body {
   font-family: Helvetica, Arial, sans-serif;
 }
 
+.status {
+  background: #fff3cd;
+  border-bottom: 1px solid #ffeeba;
+  color: #856404;
+  padding: 10px 16px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.status[hidden] {
+  display: none;
+}
+
 h1 {
   margin-bottom: 16px;
 }

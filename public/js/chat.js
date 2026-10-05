@@ -6,6 +6,18 @@ const $messageFormInput = $messageForm.querySelector('input')
 const $messageFormButton = $messageForm.querySelector('button')
 const $messages = document.querySelector('#messages')
 const $sidebar = document.querySelector('#sidebar')
+const $status = document.querySelector('#status')
+
+// Render's free tier spins the instance down after 15 minutes idle, so the
+// socket can drop mid-conversation. Show it rather than looking frozen.
+const setStatus = (text) => {
+  $status.textContent = text || ''
+  $status.hidden = !text
+}
+
+socket.on('disconnect', () => setStatus('Connection lost. Reconnecting...'))
+socket.on('connect', () => setStatus(''))
+socket.on('connect_error', () => setStatus('Cannot reach the server yet...'))
 
 // Templates
 const messageTemplate = document.querySelector('#message-template').innerHTML
@@ -52,9 +64,9 @@ socket.on('message', (message) => {
   autoScroll()
 })
 
-socket.on('roomData', ({ room, users }) => {
+socket.on('roomData', ({ room: roomName, users }) => {
   const html = Mustache.render(sidebarTemplate, {
-    room,
+    room: roomName,
     users,
   })
   $sidebar.innerHTML = html

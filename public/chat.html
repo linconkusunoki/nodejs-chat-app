@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -9,6 +9,8 @@
     <link rel="stylesheet" href="/css/styles.css" />
   </head>
   <body>
+    <div id="status" class="status" hidden></div>
+
     <div class="chat">
       <div id="sidebar" class="chat__sidebar"></div>
 
@@ -17,13 +19,7 @@
 
         <div class="compose">
           <form id="message-form">
-            <input
-              type="text"
-              name="message"
-              placeholder="Message"
-              required
-              autocomplete="off"
-            />
+            <input type="text" name="message" placeholder="Message" required autocomplete="off" />
             <button>Send</button>
           </form>
         </div>
@@ -45,7 +41,7 @@
       <h3 class="list-title">Users</h3>
       <ul class="users">
         {{ #users }}
-          <li>{{ username }}</li>
+        <li>{{ username }}</li>
         {{ /users }}
       </ul>
       <div class="spacer"></div>
