@@ -446,6 +446,29 @@ button:disabled {
   display: block;
 }
 
+.msg__edited {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  margin-left: 6px;
+}
+
+.msg__edit {
+  width: 100%;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.6;
+  color: inherit;
+  background: var(--bg-input);
+  border: 1px solid var(--brand);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+.msg__tool--danger:hover {
+  color: #d93025;
+  border-color: #d93025;
+}
+
 .msg__reactions {
   display: flex;
   flex-wrap: wrap;

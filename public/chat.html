@@ -95,6 +95,7 @@
             <time class="msg__time">{{ createdAt }}</time>
           </div>
           <div class="msg__text">{{ message }}</div>
+          <span class="msg__edited" data-edited hidden>edited</span>
           <div class="msg__reactions" data-reactions></div>
           <div class="msg__picker" data-picker hidden></div>
         </div>
@@ -124,6 +125,40 @@
               <path d="m4 12 5 5L20 6" />
             </svg>
           </button>
+          {{#own}}
+          <button class="msg__tool" type="button" data-edit aria-label="Edit message">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </svg>
+          </button>
+          <button
+            class="msg__tool msg__tool--danger"
+            type="button"
+            data-delete
+            aria-label="Delete message"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M3 6h18" />
+              <path d="M8 6V4h8v2" />
+              <path d="M19 6l-1 14H6L5 6" />
+            </svg>
+          </button>
+          {{/own}}
         </div>
       </article>
     </script>

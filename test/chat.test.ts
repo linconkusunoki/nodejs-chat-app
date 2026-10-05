@@ -52,6 +52,26 @@ const nextEvent = <T>(socket: Socket, event: string) =>
     setTimeout(() => reject(new Error(`no '${event}' received`)), 5000)
   })
 
+// A plain `once('message')` races the "x has joined" system line, which can
+// land after the listener is attached and would otherwise be mistaken for the
+// message under test. Match on the text instead.
+const nextMessage = (socket: Socket, text: string) =>
+  new Promise<ChatMessage>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      socket.off('message', onMessage)
+      reject(new Error(`no message '${text}' received`))
+    }, 5000)
+
+    const onMessage = (message: ChatMessage) => {
+      if (message.text !== text) return
+      clearTimeout(timer)
+      socket.off('message', onMessage)
+      resolve(message)
+    }
+
+    socket.on('message', onMessage)
+  })
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // Replay arrives as a burst, so a `once` listener is the wrong shape: two of
@@ -86,7 +106,7 @@ test('a message reaches everyone in the room', async (t) => {
   await emit(alice, 'join', { username: 'alice', room: 'js' })
   await emit(bob, 'join', { username: 'bob', room: 'js' })
 
-  const received = nextEvent<ChatMessage>(bob, 'message')
+  const received = nextMessage(bob, 'hello')
   await emit(alice, 'sendMessage', 'hello')
 
   assert.strictEqual((await received).text, 'hello')
@@ -194,9 +214,9 @@ test('every message carries a unique id', async (t) => {
 
   await emit(alice, 'join', { username: 'alice', room: 'id-room' })
 
-  const first = nextEvent<ChatMessage>(alice, 'message')
+  const first = nextMessage(alice, 'one')
   await emit(alice, 'sendMessage', 'one')
-  const second = nextEvent<ChatMessage>(alice, 'message')
+  const second = nextMessage(alice, 'two')
   await emit(alice, 'sendMessage', 'two')
 
   assert.ok((await first).id)
@@ -251,7 +271,7 @@ test('a reaction can be added and taken back by the same user', async (t) => {
   await emit(alice, 'join', { username: 'alice', room: 'react-room' })
   await emit(bob, 'join', { username: 'bob', room: 'react-room' })
 
-  const sent = nextEvent<ChatMessage>(alice, 'message')
+  const sent = nextMessage(alice, 'react to me')
   await emit(alice, 'sendMessage', 'react to me')
   const { id } = await sent
 
@@ -273,7 +293,7 @@ test('reactions from two users share one count', async (t) => {
   await emit(alice, 'join', { username: 'alice', room: 'react-two' })
   await emit(bob, 'join', { username: 'bob', room: 'react-two' })
 
-  const sent = nextEvent<ChatMessage>(bob, 'message')
+  const sent = nextMessage(bob, 'hi all')
   await emit(alice, 'sendMessage', 'hi all')
   const { id } = await sent
 
@@ -289,7 +309,7 @@ test('reactions survive in the replayed history', async (t) => {
   t.after(() => alice.close())
 
   await emit(alice, 'join', { username: 'alice', room: 'react-history' })
-  const sent = nextEvent<ChatMessage>(alice, 'message')
+  const sent = nextMessage(alice, 'remember this')
   await emit(alice, 'sendMessage', 'remember this')
   await emit(alice, 'toggleReaction', { id: (await sent).id, emoji: '❤️' })
 
@@ -307,7 +327,7 @@ test('an emoji outside the allowlist is rejected, not stored', async (t) => {
   t.after(() => alice.close())
 
   await emit(alice, 'join', { username: 'alice', room: 'react-guard' })
-  const sent = nextEvent<ChatMessage>(alice, 'message')
+  const sent = nextMessage(alice, 'no arbitrary strings please')
   await emit(alice, 'sendMessage', 'no arbitrary strings please')
   const { id } = await sent
 
@@ -341,7 +361,7 @@ test('reactions cannot be applied from another room', async (t) => {
   await emit(alice, 'join', { username: 'alice', room: 'room-a' })
   await emit(mallory, 'join', { username: 'mallory', room: 'room-b' })
 
-  const sent = nextEvent<ChatMessage>(alice, 'message')
+  const sent = nextMessage(alice, 'private to room a')
   await emit(alice, 'sendMessage', 'private to room a')
   const { id } = await sent
 
@@ -360,6 +380,167 @@ test('roomData lists the reaction picker options', async (t) => {
   await emit(alice, 'join', { username: 'alice', room: 'picker-room' })
 
   assert.deepStrictEqual((await received).reactions, [...REACTION_EMOJI])
+})
+
+test('an author can edit their own message', async (t) => {
+  const alice = await connect()
+  const bob = await connect()
+  t.after(() => [alice, bob].forEach((s) => s.close()))
+
+  await emit(alice, 'join', { username: 'alice', room: 'edit-room' })
+  await emit(bob, 'join', { username: 'bob', room: 'edit-room' })
+
+  const sent = nextMessage(alice, 'typo heer')
+  await emit(alice, 'sendMessage', 'typo heer')
+  const { id } = await sent
+
+  const updated = nextEvent<ChatMessage>(bob, 'messageUpdated')
+  await emit(alice, 'editMessage', { id, text: 'typo here' })
+
+  const message = await updated
+  assert.strictEqual(message.text, 'typo here')
+  assert.strictEqual(message.id, id)
+  assert.ok(message.editedAt, 'editedAt is set')
+})
+
+test('an edited message survives replay with its new text', async (t) => {
+  const alice = await connect()
+  t.after(() => alice.close())
+
+  await emit(alice, 'join', { username: 'alice', room: 'edit-history' })
+  const sent = nextMessage(alice, 'before')
+  await emit(alice, 'sendMessage', 'before')
+  await emit(alice, 'editMessage', { id: (await sent).id, text: 'after' })
+
+  const bob = await connect()
+  t.after(() => bob.close())
+  const replayed = collectMessages(bob)
+  await emit(bob, 'join', { username: 'bob', room: 'edit-history' })
+  await waitForMessages(replayed, 1)
+
+  assert.strictEqual(replayed[0]?.text, 'after')
+  assert.ok(replayed[0]?.editedAt)
+})
+
+test('an edit is held to the same limits as a new message', async (t) => {
+  const alice = await connect()
+  t.after(() => alice.close())
+
+  await emit(alice, 'join', { username: 'alice', room: 'edit-limits' })
+  const sent = nextMessage(alice, 'original')
+  await emit(alice, 'sendMessage', 'original')
+  const { id } = await sent
+
+  assert.match(await emitError(alice, 'editMessage', { id, text: '  ' }), /cannot be empty/)
+  assert.match(await emitError(alice, 'editMessage', { id, text: 'x'.repeat(1001) }), /fewer/)
+  assert.match(await emitError(alice, 'editMessage', { id, text: 'damn' }), /Profanity/)
+
+  // The rejected edits left the original alone.
+  const replayed = collectMessages(alice)
+  await sleep(200)
+  assert.ok(replayed.every((message) => message.text !== 'damn'))
+})
+
+test("editing someone else's message is rejected", async (t) => {
+  const alice = await connect()
+  const bob = await connect()
+  t.after(() => [alice, bob].forEach((s) => s.close()))
+
+  await emit(alice, 'join', { username: 'alice', room: 'edit-guard' })
+  await emit(bob, 'join', { username: 'bob', room: 'edit-guard' })
+
+  const sent = nextMessage(alice, 'alice wrote this')
+  await emit(alice, 'sendMessage', 'alice wrote this')
+  const { id } = await sent
+
+  assert.match(await emitError(bob, 'editMessage', { id, text: 'bob was here' }), /only edit/)
+
+  const replayed = collectMessages(alice)
+  await sleep(200)
+  assert.strictEqual(replayed.filter((m) => m.text === 'bob was here').length, 0)
+})
+
+test('a message in another room cannot be edited', async (t) => {
+  const alice = await connect()
+  const mallory = await connect()
+  t.after(() => [alice, mallory].forEach((s) => s.close()))
+
+  await emit(alice, 'join', { username: 'alice', room: 'room-a' })
+  await emit(mallory, 'join', { username: 'mallory', room: 'room-b' })
+
+  const sent = nextMessage(alice, 'room a only')
+  await emit(alice, 'sendMessage', 'room a only')
+  const { id } = await sent
+
+  assert.match(await emitError(mallory, 'editMessage', { id, text: 'hijacked' }), /only edit/)
+})
+
+test('editing before joining is rejected', async (t) => {
+  const socket = await connect()
+  t.after(() => socket.close())
+
+  assert.match(await emitError(socket, 'editMessage', { id: 'x', text: 'y' }), /not in a room/)
+})
+
+test('an author can delete their own message for everyone', async (t) => {
+  const alice = await connect()
+  const bob = await connect()
+  t.after(() => [alice, bob].forEach((s) => s.close()))
+
+  await emit(alice, 'join', { username: 'alice', room: 'delete-room' })
+  await emit(bob, 'join', { username: 'bob', room: 'delete-room' })
+
+  const sent = nextMessage(bob, 'delete me')
+  await emit(alice, 'sendMessage', 'delete me')
+  const { id } = await sent
+
+  const deleted = nextEvent<{ id: string }>(bob, 'messageDeleted')
+  await emit(alice, 'deleteMessage', { id })
+
+  assert.strictEqual((await deleted).id, id)
+})
+
+test("deleting someone else's message is rejected", async (t) => {
+  const alice = await connect()
+  const bob = await connect()
+  t.after(() => [alice, bob].forEach((s) => s.close()))
+
+  await emit(alice, 'join', { username: 'alice', room: 'delete-guard' })
+  await emit(bob, 'join', { username: 'bob', room: 'delete-guard' })
+
+  const sent = nextMessage(alice, 'alice wrote this')
+  await emit(alice, 'sendMessage', 'alice wrote this')
+  const { id } = await sent
+
+  assert.match(await emitError(bob, 'deleteMessage', { id }), /only delete/)
+  await expectNoEvent(alice, 'messageDeleted')
+})
+
+test('a deleted message is gone from the replayed history', async (t) => {
+  const alice = await connect()
+  t.after(() => alice.close())
+
+  await emit(alice, 'join', { username: 'alice', room: 'delete-history' })
+  const sent = nextMessage(alice, 'temporary')
+  await emit(alice, 'sendMessage', 'temporary')
+  const { id } = await sent
+  await emit(alice, 'deleteMessage', { id })
+
+  const bob = await connect()
+  t.after(() => bob.close())
+  const replayed = collectMessages(bob)
+  await emit(bob, 'join', { username: 'bob', room: 'delete-history' })
+  await waitForMessages(replayed, 1)
+  await sleep(150)
+
+  assert.ok(replayed.every((message) => message.text !== 'temporary'))
+})
+
+test('deleting before joining is rejected', async (t) => {
+  const socket = await connect()
+  t.after(() => socket.close())
+
+  assert.match(await emitError(socket, 'deleteMessage', { id: 'x' }), /not in a room/)
 })
 
 test('/health returns 200', async () => {

@@ -6,7 +6,9 @@ import {
   findMessage,
   generateMessage,
   getRoomHistory,
+  removeMessage,
   toggleReaction,
+  updateMessage,
 } from './utils/messages.ts'
 import { isReactionEmoji, MAX_MESSAGE_LENGTH, REACTION_EMOJI } from './types.ts'
 import type { RoomUser } from './types.ts'
@@ -27,6 +29,25 @@ const broadcast = (io: Server, room: string, username: string, text: string) => 
   addMessage(room, message)
   io.to(room).emit('message', message)
   return message
+}
+
+// Shared by sendMessage and editMessage so the rules cannot drift apart: an
+// edit has to be held to the same length and profanity limits as an original.
+const validateText = (text: string): string | undefined => {
+  if (!text) return 'Message cannot be empty!'
+  if (text.length > MAX_MESSAGE_LENGTH) {
+    return `Message must be ${MAX_MESSAGE_LENGTH} characters or fewer!`
+  }
+  if (filter.isProfane(text)) return 'Profanity is not allowed!'
+  return undefined
+}
+
+// Only the message's own author may change it. The room lookup scopes the id,
+// and this check scopes the change within that room.
+const findOwnMessage = (user: RoomUser, id: unknown) => {
+  if (typeof id !== 'string') return undefined
+  const message = findMessage(user.room, id)
+  return message?.username === user.username ? message : undefined
 }
 
 export const registerSocketHandlers = (io: Server) => {
@@ -70,12 +91,40 @@ export const registerSocketHandlers = (io: Server) => {
       if (!user) return ack?.('You are not in a room!')
 
       const text = typeof message === 'string' ? message.trim() : ''
-      if (!text) return ack?.('Message cannot be empty!')
-      if (text.length > MAX_MESSAGE_LENGTH)
-        return ack?.(`Message must be ${MAX_MESSAGE_LENGTH} characters or fewer!`)
-      if (filter.isProfane(text)) return ack?.('Profanity is not allowed!')
+      const error = validateText(text)
+      if (error) return ack?.(error)
 
       broadcast(io, user.room, user.username, text)
+      ack?.()
+    })
+
+    socket.on('editMessage', (payload: unknown, ack?: (error?: string) => void) => {
+      const user = requireUser()
+      if (!user) return ack?.('You are not in a room!')
+
+      const { id, text: raw } = (payload ?? {}) as { id?: string; text?: string }
+      const message = findOwnMessage(user, id)
+      if (!message) return ack?.('You can only edit your own messages!')
+
+      const text = typeof raw === 'string' ? raw.trim() : ''
+      const error = validateText(text)
+      if (error) return ack?.(error)
+
+      updateMessage(user.room, message.id, text)
+      io.to(user.room).emit('messageUpdated', message)
+      ack?.()
+    })
+
+    socket.on('deleteMessage', (payload: unknown, ack?: (error?: string) => void) => {
+      const user = requireUser()
+      if (!user) return ack?.('You are not in a room!')
+
+      const { id } = (payload ?? {}) as { id?: string }
+      const message = findOwnMessage(user, id)
+      if (!message) return ack?.('You can only delete your own messages!')
+
+      removeMessage(user.room, message.id)
+      io.to(user.room).emit('messageDeleted', { id: message.id })
       ack?.()
     })
 

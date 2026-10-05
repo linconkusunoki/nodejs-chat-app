@@ -140,6 +140,64 @@ let pickerEmoji = []
 
 const findMessageEl = (id) => $thread.querySelector(`.msg[data-id="${id}"]`)
 
+// Inline editing: the text node is swapped for a real <input> and the value is
+// set through the DOM, so whatever the current text is cannot become markup.
+const startEdit = (article) => {
+  const textEl = article.querySelector('.msg__text')
+  if (!textEl || textEl.querySelector('input')) return
+
+  const input = document.createElement('input')
+  input.className = 'msg__edit'
+  input.value = textEl.textContent ?? ''
+  input.maxLength = $messageFormInput.maxLength
+  input.setAttribute('aria-label', 'Edit message')
+
+  const save = () => {
+    const text = input.value.trim()
+    if (!text || text === textEl.dataset.original) return stopEdit(article)
+
+    socket.emit('editMessage', { id: article.dataset.id, text }, (error) => {
+      // On success messageUpdated sets the text and tears down the input, so
+      // restoring here would clobber the edit the broadcast just delivered.
+      if (!error) return
+      stopEdit(article)
+      console.log(error)
+    })
+  }
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') save()
+    if (event.key === 'Escape') stopEdit(article)
+  })
+  // Wrapped: a bare listener would hand stopEdit the FocusEvent, not the article.
+  input.addEventListener('blur', () => stopEdit(article))
+
+  textEl.dataset.original = textEl.textContent ?? ''
+  textEl.replaceChildren(input)
+  input.focus()
+  input.select()
+}
+
+const stopEdit = (article) => {
+  const textEl = article?.querySelector('.msg__text')
+  if (!textEl?.querySelector('input')) return
+  // textContent, not innerHTML: the text is user input.
+  textEl.textContent = textEl.dataset.original ?? ''
+}
+
+const deleteMessage = (article) => {
+  const id = article.dataset.id
+  if (!id) return
+  // Native confirm rather than a second inline state: a delete with no undo
+  // should not be one stray click away.
+  if (!confirm('Delete this message for everyone?')) return
+
+  socket.emit('deleteMessage', { id }, (error) => {
+    if (error) return console.log(error)
+    article.remove()
+  })
+}
+
 // Chips are built in JS rather than in the Mustache template because they
 // change without the message itself changing, and the emoji list only arrives
 // with roomData — after the first messages have already rendered.
@@ -189,11 +247,36 @@ $thread.addEventListener('click', (event) => {
   }
 
   if (event.target.closest('[data-add-reaction]')) {
-    togglePicker(event.target.closest('.msg'))
+    return togglePicker(event.target.closest('.msg'))
+  }
+
+  if (event.target.closest('[data-edit]')) {
+    return startEdit(event.target.closest('.msg'))
+  }
+
+  if (event.target.closest('[data-delete]')) {
+    return deleteMessage(event.target.closest('.msg'))
   }
 })
 
-socket.on('messageUpdated', renderReactions)
+// One channel for reactions, edits and anything else that changes a message
+// in place. Writing textContent also tears down an input the author is editing.
+socket.on('messageUpdated', (message) => {
+  const article = findMessageEl(message.id)
+  const textEl = article?.querySelector('.msg__text')
+
+  if (textEl) {
+    textEl.textContent = message.text
+    textEl.dataset.original = message.text
+  }
+
+  const edited = article?.querySelector('[data-edited]')
+  if (edited) edited.hidden = !message.editedAt
+
+  renderReactions(message)
+})
+
+socket.on('messageDeleted', ({ id }) => findMessageEl(id)?.remove())
 
 let previousAuthor = null
 let previousTime = null
