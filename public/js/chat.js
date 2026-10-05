@@ -86,6 +86,14 @@ const username = String(options.username ?? '')
 
 const ADMIN = 'admin'
 
+// Usernames are user input and end up inside an HTML attribute below, so they
+// need the same escaping Mustache does for the templated parts of the page.
+const escapeAttr = (value) =>
+  String(value).replace(
+    /[&<>"']/g,
+    (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]
+  )
+
 const initials = (name) => name.slice(0, 2).toUpperCase()
 
 const throttle = (fn, ms) => {
@@ -127,6 +135,65 @@ const autoScroll = () => {
     $messages.scrollTop = $messages.scrollHeight
   }
 }
+
+let pickerEmoji = []
+
+const findMessageEl = (id) => $thread.querySelector(`.msg[data-id="${id}"]`)
+
+// Chips are built in JS rather than in the Mustache template because they
+// change without the message itself changing, and the emoji list only arrives
+// with roomData — after the first messages have already rendered.
+const renderReactions = (message) => {
+  const row = findMessageEl(message.id)?.querySelector('[data-reactions]')
+  if (!row) return
+
+  const chips = (message.reactions ?? []).map((reaction) => {
+    const mine = reaction.usernames.includes(username)
+    const who = escapeAttr(reaction.usernames.join(', '))
+    return (
+      `<button class="chip${mine ? ' chip--mine' : ''}" type="button"` +
+      ` data-reaction="${escapeAttr(reaction.emoji)}" title="${who}"` +
+      ` aria-pressed="${mine}">${reaction.emoji}` +
+      `<span class="chip__count">${reaction.usernames.length}</span></button>`
+    )
+  })
+
+  row.innerHTML =
+    chips.join('') + '<button class="chip chip--add" type="button" data-add-reaction>+</button>'
+}
+
+const togglePicker = (article) => {
+  const picker = article?.querySelector('[data-picker]')
+  if (!picker) return
+
+  picker.innerHTML = pickerEmoji
+    .map(
+      (emoji) => `<button class="msg__emoji" type="button" data-emoji="${emoji}">${emoji}</button>`
+    )
+    .join('')
+  picker.hidden = !picker.hidden
+}
+
+$thread.addEventListener('click', (event) => {
+  const chosen = event.target.closest('[data-reaction], [data-emoji]')
+  if (chosen) {
+    const article = chosen.closest('.msg')
+    const picker = article?.querySelector('[data-picker]')
+    if (picker) picker.hidden = true
+
+    socket.emit('toggleReaction', {
+      id: article?.dataset.id,
+      emoji: chosen.dataset.reaction ?? chosen.dataset.emoji,
+    })
+    return
+  }
+
+  if (event.target.closest('[data-add-reaction]')) {
+    togglePicker(event.target.closest('.msg'))
+  }
+})
+
+socket.on('messageUpdated', renderReactions)
 
 let previousAuthor = null
 let previousTime = null
@@ -179,6 +246,8 @@ socket.on('message', (message) => {
 
   $thread.insertAdjacentHTML('beforeend', html)
 
+  if (!isSystem) renderReactions(message)
+
   // Only other people's messages while the tab is out of sight count as
   // unread; your own and the system lines would be noise in the count.
   if (document.hidden && !isSystem && author !== username) notifyUnread(message)
@@ -189,7 +258,7 @@ socket.on('message', (message) => {
   autoScroll()
 })
 
-socket.on('roomData', ({ room: roomName, users, maxMessageLength }) => {
+socket.on('roomData', ({ room: roomName, users, maxMessageLength, reactions }) => {
   const html = Mustache.render(sidebarTemplate, {
     room: roomName,
     initial: initials(roomName),
@@ -207,6 +276,9 @@ socket.on('roomData', ({ room: roomName, users, maxMessageLength }) => {
   // shot. Both read the same server value so they cannot disagree.
   $messageFormInput.maxLength = maxMessageLength
   $counter.hidden = false
+
+  // Fills the "+" picker for messages that rendered before roomData arrived.
+  pickerEmoji = reactions
 })
 
 // Only worth showing once the limit is close enough to matter.

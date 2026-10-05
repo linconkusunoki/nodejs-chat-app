@@ -41,5 +41,24 @@ export const removeMessage = (room: string, id: string): ChatMessage | undefined
   return index === -1 ? undefined : history.splice(index, 1)[0]
 }
 
+// Toggling rather than adding: reacting twice takes the reaction back, and an
+// emoji nobody has reacted with disappears from the row instead of lingering
+// as a permanent "0".
+export const toggleReaction = (message: ChatMessage, emoji: string, username: string): void => {
+  const reactions = (message.reactions ??= [])
+  const existing = reactions.find((reaction) => reaction.emoji === emoji)
+
+  if (!existing) {
+    reactions.push({ emoji, usernames: [username] })
+    return
+  }
+
+  const index = existing.usernames.indexOf(username)
+  if (index === -1) existing.usernames.push(username)
+  else existing.usernames.splice(index, 1)
+
+  if (!existing.usernames.length) reactions.splice(reactions.indexOf(existing), 1)
+}
+
 // ponytail: room keys are never evicted, so a hostile client can grow this map
 // by joining many distinct rooms. Evict on empty + LRU cap if that matters.

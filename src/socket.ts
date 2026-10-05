@@ -1,8 +1,14 @@
 import { Server } from 'socket.io'
 import { Filter } from 'bad-words'
 import { addUser, getUser, getUsersInRoom, removeUser } from './utils/users.ts'
-import { addMessage, generateMessage, getRoomHistory } from './utils/messages.ts'
-import { MAX_MESSAGE_LENGTH } from './types.ts'
+import {
+  addMessage,
+  findMessage,
+  generateMessage,
+  getRoomHistory,
+  toggleReaction,
+} from './utils/messages.ts'
+import { isReactionEmoji, MAX_MESSAGE_LENGTH, REACTION_EMOJI } from './types.ts'
 import type { RoomUser } from './types.ts'
 
 const filter = new Filter()
@@ -11,6 +17,7 @@ const roomPayload = (room: string) => ({
   room,
   users: getUsersInRoom(room).map(({ username }) => ({ username })),
   maxMessageLength: MAX_MESSAGE_LENGTH,
+  reactions: REACTION_EMOJI,
 })
 
 // Only user messages are replayed to newcomers: system lines ("x has left")
@@ -69,6 +76,26 @@ export const registerSocketHandlers = (io: Server) => {
       if (filter.isProfane(text)) return ack?.('Profanity is not allowed!')
 
       broadcast(io, user.room, user.username, text)
+      ack?.()
+    })
+
+    socket.on('toggleReaction', (payload: unknown, ack?: (error?: string) => void) => {
+      const user = requireUser()
+      if (!user) return ack?.('You are not in a room!')
+
+      const { id, emoji } = (payload ?? {}) as { id?: string; emoji?: string }
+
+      // The emoji list is a trust boundary: a client can send any string here,
+      // so it is checked against the allowlist rather than stored as-is.
+      if (typeof id !== 'string' || !isReactionEmoji(emoji)) {
+        return ack?.('Unknown reaction!')
+      }
+
+      const message = findMessage(user.room, id)
+      if (!message) return ack?.('That message is no longer available!')
+
+      toggleReaction(message, emoji, user.username)
+      io.to(user.room).emit('messageUpdated', message)
       ack?.()
     })
 

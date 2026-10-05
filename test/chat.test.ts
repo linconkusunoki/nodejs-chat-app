@@ -5,7 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { io as ioClient, type Socket } from 'socket.io-client'
 import type { ChatMessage, RoomData } from '../src/types.ts'
-import { MAX_MESSAGE_LENGTH } from '../src/types.ts'
+import { MAX_MESSAGE_LENGTH, REACTION_EMOJI } from '../src/types.ts'
 
 const PORT = 4123
 const URL = `http://localhost:${PORT}`
@@ -241,6 +241,125 @@ test('roomData carries the message limit for the composer', async (t) => {
   // The client sets maxlength and its counter from this, so a mismatch here
   // would let the composer accept text the server then rejects.
   assert.strictEqual((await received).maxMessageLength, MAX_MESSAGE_LENGTH)
+})
+
+test('a reaction can be added and taken back by the same user', async (t) => {
+  const alice = await connect()
+  const bob = await connect()
+  t.after(() => [alice, bob].forEach((s) => s.close()))
+
+  await emit(alice, 'join', { username: 'alice', room: 'react-room' })
+  await emit(bob, 'join', { username: 'bob', room: 'react-room' })
+
+  const sent = nextEvent<ChatMessage>(alice, 'message')
+  await emit(alice, 'sendMessage', 'react to me')
+  const { id } = await sent
+
+  const added = nextEvent<ChatMessage>(bob, 'messageUpdated')
+  await emit(bob, 'toggleReaction', { id, emoji: '👍' })
+  assert.deepStrictEqual((await added).reactions, [{ emoji: '👍', usernames: ['bob'] }])
+
+  // Reacting again is a toggle, and an emptied emoji drops off the row.
+  const removed = nextEvent<ChatMessage>(bob, 'messageUpdated')
+  await emit(bob, 'toggleReaction', { id, emoji: '👍' })
+  assert.deepStrictEqual((await removed).reactions, [])
+})
+
+test('reactions from two users share one count', async (t) => {
+  const alice = await connect()
+  const bob = await connect()
+  t.after(() => [alice, bob].forEach((s) => s.close()))
+
+  await emit(alice, 'join', { username: 'alice', room: 'react-two' })
+  await emit(bob, 'join', { username: 'bob', room: 'react-two' })
+
+  const sent = nextEvent<ChatMessage>(bob, 'message')
+  await emit(alice, 'sendMessage', 'hi all')
+  const { id } = await sent
+
+  await emit(alice, 'toggleReaction', { id, emoji: '🎉' })
+  const both = nextEvent<ChatMessage>(alice, 'messageUpdated')
+  await emit(bob, 'toggleReaction', { id, emoji: '🎉' })
+
+  assert.deepStrictEqual((await both).reactions, [{ emoji: '🎉', usernames: ['alice', 'bob'] }])
+})
+
+test('reactions survive in the replayed history', async (t) => {
+  const alice = await connect()
+  t.after(() => alice.close())
+
+  await emit(alice, 'join', { username: 'alice', room: 'react-history' })
+  const sent = nextEvent<ChatMessage>(alice, 'message')
+  await emit(alice, 'sendMessage', 'remember this')
+  await emit(alice, 'toggleReaction', { id: (await sent).id, emoji: '❤️' })
+
+  const bob = await connect()
+  t.after(() => bob.close())
+  const replayed = collectMessages(bob)
+  await emit(bob, 'join', { username: 'bob', room: 'react-history' })
+  await waitForMessages(replayed, 1)
+
+  assert.deepStrictEqual(replayed[0]?.reactions, [{ emoji: '❤️', usernames: ['alice'] }])
+})
+
+test('an emoji outside the allowlist is rejected, not stored', async (t) => {
+  const alice = await connect()
+  t.after(() => alice.close())
+
+  await emit(alice, 'join', { username: 'alice', room: 'react-guard' })
+  const sent = nextEvent<ChatMessage>(alice, 'message')
+  await emit(alice, 'sendMessage', 'no arbitrary strings please')
+  const { id } = await sent
+
+  // The client can send any string here, so it is checked server-side.
+  assert.match(await emitError(alice, 'toggleReaction', { id, emoji: '<img src=x>' }), /Unknown/)
+  assert.match(await emitError(alice, 'toggleReaction', { id, emoji: '💩' }), /Unknown/)
+  assert.match(await emitError(alice, 'toggleReaction', { id, emoji: 42 }), /Unknown/)
+
+  const updated = nextEvent<ChatMessage>(alice, 'messageUpdated')
+  await emit(alice, 'toggleReaction', { id, emoji: '👍' })
+  assert.deepStrictEqual((await updated).reactions, [{ emoji: '👍', usernames: ['alice'] }])
+})
+
+test('reacting to a message that does not exist is rejected', async (t) => {
+  const alice = await connect()
+  t.after(() => alice.close())
+
+  await emit(alice, 'join', { username: 'alice', room: 'react-missing' })
+
+  assert.match(
+    await emitError(alice, 'toggleReaction', { id: 'not-a-real-id', emoji: '👍' }),
+    /no longer available/
+  )
+})
+
+test('reactions cannot be applied from another room', async (t) => {
+  const alice = await connect()
+  const mallory = await connect()
+  t.after(() => [alice, mallory].forEach((s) => s.close()))
+
+  await emit(alice, 'join', { username: 'alice', room: 'room-a' })
+  await emit(mallory, 'join', { username: 'mallory', room: 'room-b' })
+
+  const sent = nextEvent<ChatMessage>(alice, 'message')
+  await emit(alice, 'sendMessage', 'private to room a')
+  const { id } = await sent
+
+  // findMessage is scoped by the sender's own room, so the id is not reachable.
+  assert.match(
+    await emitError(mallory, 'toggleReaction', { id, emoji: '👍' }),
+    /no longer available/
+  )
+})
+
+test('roomData lists the reaction picker options', async (t) => {
+  const alice = await connect()
+  t.after(() => alice.close())
+
+  const received = nextEvent<RoomData>(alice, 'roomData')
+  await emit(alice, 'join', { username: 'alice', room: 'picker-room' })
+
+  assert.deepStrictEqual((await received).reactions, [...REACTION_EMOJI])
 })
 
 test('/health returns 200', async () => {
