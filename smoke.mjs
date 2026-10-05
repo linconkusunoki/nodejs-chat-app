@@ -33,7 +33,60 @@ const check = (name, pass, detail = '') => {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
 }
 
-const server = spawn('npm', ['run', '--silent', 'start'], {
+// Registered before anything can throw: these two children keep the event loop
+// alive, so a failure anywhere below would otherwise hang the run silently
+// instead of exiting non-zero. Assigned as they are spawned.
+let server = null
+let chrome = null
+let ws = null
+
+const cleanup = () => {
+  for (const child of [ws, chrome, server]) {
+    try {
+      child?.kill()
+    } catch {
+      /* already gone */
+    }
+  }
+  // Chrome is a process tree, so kill() only reaps the launcher and the profile
+  // directory stays locked. detached makes it a process group leader, so the
+  // negative pid takes the whole tree down with it.
+  try {
+    if (chrome?.pid) process.kill(-chrome.pid, 'SIGKILL')
+  } catch {
+    /* group already gone */
+  }
+}
+
+let exitCode = 1
+
+process.on('uncaughtException', (error) => {
+  console.error(`\nsmoke run threw: ${error?.stack ?? error}`)
+  cleanup()
+  process.exit(1)
+})
+
+process.on('unhandledRejection', (error) => {
+  console.error(`\nsmoke run rejected: ${error?.stack ?? error}`)
+  cleanup()
+  process.exit(1)
+})
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    cleanup()
+    process.exit(signal === 'SIGINT' ? 130 : 143)
+  })
+}
+
+// Backstop: if anything below leaves the event loop busy, stop anyway.
+const watchdog = setTimeout(() => {
+  console.error('\nsmoke run timed out')
+  cleanup()
+  process.exit(1)
+}, 90_000)
+
+server = spawn('npm', ['run', '--silent', 'start'], {
   cwd: PROJECT,
   env: { ...process.env, PORT: String(PORT) },
   stdio: ['ignore', 'pipe', 'inherit'],
@@ -46,7 +99,7 @@ const profile = `/tmp/cdp-smoke-profile-${process.pid}`
 // Per-run, not the usual 9222: a Chrome left over from an interrupted run keeps
 // that port and this script would hang forever waiting on it.
 const debugPort = 9300 + (process.pid % 400)
-const chrome = spawn(
+chrome = spawn(
   CHROME,
   [
     '--headless=new',
@@ -56,7 +109,7 @@ const chrome = spawn(
     '--no-default-browser-check',
     'about:blank',
   ],
-  { stdio: 'ignore' }
+  { stdio: 'ignore', detached: true }
 )
 await sleep(2500)
 
@@ -64,7 +117,7 @@ await sleep(2500)
 const { webSocketDebuggerUrl } = await (
   await fetch(`http://127.0.0.1:${debugPort}/json/version`)
 ).json()
-const ws = new WebSocket(webSocketDebuggerUrl)
+ws = new WebSocket(webSocketDebuggerUrl)
 await new Promise((r) => (ws.onopen = r))
 
 let nextId = 0
@@ -135,6 +188,13 @@ const hover = async (sessionId, selector) => {
 }
 
 const unhover = (sessionId) => moveMouse(sessionId, 2, 2)
+
+const opacityOf = (sessionId, selector) =>
+  evaluate(
+    sessionId,
+    `(() => { const el = document.querySelector(${JSON.stringify(selector)});
+       return el && getComputedStyle(el).opacity })()`
+  )
 
 const alice = await newPage(`${APP}/chat.html?room=smoke&username=alice`)
 const bob = await newPage(`${APP}/chat.html?room=smoke&username=bob`)
@@ -347,6 +407,27 @@ check('reaction chip appears', chip.value?.emoji === '👍', JSON.stringify(chip
 check('chip count is 1', chip.value?.count === '1', chip.value?.count)
 check('chip marked as mine', chip.value?.pressed === 'true', chip.value?.pressed)
 
+// An applied reaction is part of the message, so it stays visible with the mouse
+// nowhere near it -- only the "+" is hover-gated.
+await unhover(alice)
+check(
+  'applied reaction persists without hover',
+  (await opacityOf(alice, '.msg .chip[data-reaction]')).value === '1',
+  JSON.stringify(await opacityOf(alice, '.msg .chip[data-reaction]'))
+)
+check(
+  'add button still hidden without hover',
+  (await opacityOf(alice, '.msg .chip--add')).value === '0'
+)
+
+// And it survives the pointer moving right over it.
+await hover(alice, '.msg .chip[data-reaction]')
+await unhover(bob)
+check(
+  'applied reaction visible after pointer leaves',
+  (await opacityOf(alice, '.msg .chip[data-reaction]')).value === '1'
+)
+
 // bob sees the same chip without it being his
 const bobChip = await evaluate(
   bob,
@@ -382,46 +463,39 @@ await sleep(400)
 const injected = await evaluate(alice, `document.querySelectorAll('.msg script').length`)
 check('no script injected via message text', injected.value === 0, `got ${injected.value}`)
 
-// --- reactions row and message tools reveal on hover
-const opacityOf = (sessionId, selector) =>
-  evaluate(
-    sessionId,
-    `getComputedStyle(document.querySelector(${JSON.stringify(selector)})).opacity`
-  )
-
-const HOVER_TARGET = '[data-id]'
 await unhover(alice)
 check(
-  'reactions row hidden when not hovered',
-  (await opacityOf(alice, '.msg [data-reactions]')).value === '0',
-  JSON.stringify(await opacityOf(alice, '.msg [data-reactions]'))
+  'add-reaction button hidden when not hovered',
+  (await opacityOf(alice, '.msg .chip--add')).value === '0',
+  JSON.stringify(await opacityOf(alice, '.msg .chip--add'))
 )
 check('tools hidden when not hovered', (await opacityOf(alice, '.msg .msg__tools')).value === '0')
 
-await hover(alice, HOVER_TARGET)
+await hover(alice, '[data-id]')
 check(
-  'reactions row visible on hover',
-  (await opacityOf(alice, '.msg [data-reactions]')).value === '1',
-  JSON.stringify(await opacityOf(alice, '.msg [data-reactions]'))
+  'add-reaction button visible on hover',
+  (await opacityOf(alice, '.msg .chip--add')).value === '1',
+  JSON.stringify(await opacityOf(alice, '.msg .chip--add'))
 )
 check('tools visible on hover', (await opacityOf(alice, '.msg .msg__tools')).value === '1')
 
 // opacity rather than display, so revealing must not move the message below it.
-const geometry = await evaluate(
+const addGeometry = await evaluate(
   alice,
   `(() => { const m = document.querySelector('.msg');
-     const r = m.querySelector('[data-reactions]').getBoundingClientRect();
-     return { height: r.height > 0, overflows: r.bottom <= m.getBoundingClientRect().bottom + 1 } })()`
+     const r = m.querySelector('.chip--add').getBoundingClientRect();
+     return { height: r.height > 0,
+              inside: r.bottom <= m.getBoundingClientRect().bottom + 1 } })()`
 )
 check(
-  'hidden reactions row keeps its height',
-  geometry.value?.height === true,
-  JSON.stringify(geometry)
+  'hidden add button keeps its height',
+  addGeometry.value?.height === true,
+  JSON.stringify(addGeometry)
 )
 check(
-  'revealing does not reflow the message',
-  geometry.value?.overflows === true,
-  JSON.stringify(geometry)
+  'revealing the add button does not reflow',
+  addGeometry.value?.inside === true,
+  JSON.stringify(addGeometry)
 )
 
 await unhover(alice)
@@ -638,52 +712,22 @@ check('no uncaught page exceptions', errors.length === 0, `${errors.length} thro
 
 const failed = results.filter((r) => !r.pass)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
+exitCode = failed.length ? 1 : 0
 
-// Bounded, so a browser or server that will not shut down cannot leave this
-// running forever. Not unref'd: the timer is what guarantees cleanup.
-const cleanup = () => {
+clearTimeout(watchdog)
+cleanup()
+
+// Retried briefly: the process tree needs a moment to release the profile dir.
+for (let attempt = 0; attempt < 10; attempt += 1) {
   try {
-    ws.close()
+    rmSync(profile, { recursive: true, force: true })
+    break
   } catch {
-    /* already closed */
+    await sleep(300)
   }
-  try {
-    chrome.kill()
-  } catch {
-    /* already gone */
-  }
-  try {
-    server.kill()
-  } catch {
-    /* already gone */
-  }
-  rmSync(profile, { recursive: true, force: true })
 }
 
-const timer = setTimeout(() => {
-  cleanup()
-  process.exit(failed.length ? 1 : 0)
-}, 2000)
-
-process.on('exit', cleanup)
-process.on('SIGINT', () => {
-  clearTimeout(timer)
-  cleanup()
-  process.exit(130)
-})
-process.on('SIGTERM', () => {
-  clearTimeout(timer)
-  cleanup()
-  process.exit(143)
-})
-
-// Wait for Chrome to actually exit before removing its profile, otherwise the
-// directory is still being written to and the remove fails with ENOTEMPTY.
-await new Promise((resolve) => {
-  if (chrome.exitCode !== null) return resolve()
-  chrome.on('exit', resolve)
-  setTimeout(resolve, 3000)
-})
+process.exit(exitCode)
 try {
   rmSync(profile, { recursive: true, force: true })
 } catch {
