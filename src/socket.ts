@@ -28,7 +28,6 @@ const broadcast = (io: Server, room: string, username: string, text: string) => 
   const message = generateMessage(username, text)
   addMessage(room, message)
   io.to(room).emit('message', message)
-  return message
 }
 
 // Shared by sendMessage and editMessage so the rules cannot drift apart: an
