@@ -6,7 +6,17 @@ import { registerSocketHandlers } from './socket.ts'
 const port = Number(process.env.PORT) || 3000
 
 const server = createServer(createApp())
-const io = new Server(server)
+
+// Survives a brief drop (Render's free tier wakes, a tunnel blips): the socket
+// id, its rooms and its missed packets come back. The presence store is
+// application state rather than Socket.IO state, so socket.ts restores that
+// from socket.data on a recovered connection.
+const io = new Server(server, {
+  connectionStateRecovery: {
+    maxDisconnectionDuration: 2 * 60 * 1000,
+    skipMiddlewares: true,
+  },
+})
 
 registerSocketHandlers(io)
 

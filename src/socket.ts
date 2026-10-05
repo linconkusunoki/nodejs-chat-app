@@ -1,8 +1,16 @@
 import { Server } from 'socket.io'
 import { Filter } from 'bad-words'
 import { addUser, getUser, getUsersInRoom, removeUser } from './utils/users.ts'
-import { generateMessage } from './utils/messages.ts'
-import { MAX_MESSAGE_LENGTH } from './types.ts'
+import {
+  addMessage,
+  findMessage,
+  generateMessage,
+  getRoomHistory,
+  removeMessage,
+  toggleReaction,
+  updateMessage,
+} from './utils/messages.ts'
+import { isReactionEmoji, MAX_MESSAGE_LENGTH, REACTION_EMOJI } from './types.ts'
 import type { RoomUser } from './types.ts'
 
 const filter = new Filter()
@@ -10,10 +18,50 @@ const filter = new Filter()
 const roomPayload = (room: string) => ({
   room,
   users: getUsersInRoom(room).map(({ username }) => ({ username })),
+  maxMessageLength: MAX_MESSAGE_LENGTH,
+  reactions: REACTION_EMOJI,
 })
+
+// Only user messages are replayed to newcomers: system lines ("x has left")
+// refer to a presence that already changed, so replaying them is just noise.
+const broadcast = (io: Server, room: string, username: string, text: string) => {
+  const message = generateMessage(username, text)
+  addMessage(room, message)
+  io.to(room).emit('message', message)
+}
+
+// Shared by sendMessage and editMessage so the rules cannot drift apart: an
+// edit has to be held to the same length and profanity limits as an original.
+const validateText = (text: string): string | undefined => {
+  if (!text) return 'Message cannot be empty!'
+  if (text.length > MAX_MESSAGE_LENGTH) {
+    return `Message must be ${MAX_MESSAGE_LENGTH} characters or fewer!`
+  }
+  if (filter.isProfane(text)) return 'Profanity is not allowed!'
+  return undefined
+}
+
+// Only the message's own author may change it. The room lookup scopes the id,
+// and this check scopes the change within that room.
+const findOwnMessage = (user: RoomUser, id: unknown) => {
+  if (typeof id !== 'string') return undefined
+  const message = findMessage(user.room, id)
+  return message?.username === user.username ? message : undefined
+}
 
 export const registerSocketHandlers = (io: Server) => {
   io.on('connection', (socket) => {
+    // Recovery restores the id, the rooms and socket.data, but not this app's
+    // presence store, and disconnect already announced the user as gone. Put
+    // them back in the room and in the sidebar.
+    if (socket.recovered && socket.data.user) {
+      const result = addUser({ id: socket.id, ...socket.data.user })
+      if (result.user) {
+        socket.join(result.user.room)
+        io.to(result.user.room).emit('roomData', roomPayload(result.user.room))
+      }
+    }
+
     // Every event needs the sender to still be in a room; without this a
     // disconnect race throws and takes the whole process down.
     const requireUser = (): RoomUser | undefined => getUser(socket.id)
@@ -36,7 +84,11 @@ export const registerSocketHandlers = (io: Server) => {
 
       const { user } = result
       socket.join(user.room)
+      // socket.data survives a recovered reconnect, which is how presence is
+      // restored above.
+      socket.data.user = { username: user.username, room: user.room }
 
+      for (const message of getRoomHistory(user.room)) socket.emit('message', message)
       socket.emit('message', generateMessage('Admin', 'Welcome'))
       socket.broadcast
         .to(user.room)
@@ -52,13 +104,68 @@ export const registerSocketHandlers = (io: Server) => {
       if (!user) return ack?.('You are not in a room!')
 
       const text = typeof message === 'string' ? message.trim() : ''
-      if (!text) return ack?.('Message cannot be empty!')
-      if (text.length > MAX_MESSAGE_LENGTH)
-        return ack?.(`Message must be ${MAX_MESSAGE_LENGTH} characters or fewer!`)
-      if (filter.isProfane(text)) return ack?.('Profanity is not allowed!')
+      const error = validateText(text)
+      if (error) return ack?.(error)
 
-      io.to(user.room).emit('message', generateMessage(user.username, text))
+      broadcast(io, user.room, user.username, text)
       ack?.()
+    })
+
+    socket.on('editMessage', (payload: unknown, ack?: (error?: string) => void) => {
+      const user = requireUser()
+      if (!user) return ack?.('You are not in a room!')
+
+      const { id, text: raw } = (payload ?? {}) as { id?: string; text?: string }
+      const message = findOwnMessage(user, id)
+      if (!message) return ack?.('You can only edit your own messages!')
+
+      const text = typeof raw === 'string' ? raw.trim() : ''
+      const error = validateText(text)
+      if (error) return ack?.(error)
+
+      updateMessage(user.room, message.id, text)
+      io.to(user.room).emit('messageUpdated', message)
+      ack?.()
+    })
+
+    socket.on('deleteMessage', (payload: unknown, ack?: (error?: string) => void) => {
+      const user = requireUser()
+      if (!user) return ack?.('You are not in a room!')
+
+      const { id } = (payload ?? {}) as { id?: string }
+      const message = findOwnMessage(user, id)
+      if (!message) return ack?.('You can only delete your own messages!')
+
+      removeMessage(user.room, message.id)
+      io.to(user.room).emit('messageDeleted', { id: message.id })
+      ack?.()
+    })
+
+    socket.on('toggleReaction', (payload: unknown, ack?: (error?: string) => void) => {
+      const user = requireUser()
+      if (!user) return ack?.('You are not in a room!')
+
+      const { id, emoji } = (payload ?? {}) as { id?: string; emoji?: string }
+
+      // The emoji list is a trust boundary: a client can send any string here,
+      // so it is checked against the allowlist rather than stored as-is.
+      if (typeof id !== 'string' || !isReactionEmoji(emoji)) {
+        return ack?.('Unknown reaction!')
+      }
+
+      const message = findMessage(user.room, id)
+      if (!message) return ack?.('That message is no longer available!')
+
+      toggleReaction(message, emoji, user.username)
+      io.to(user.room).emit('messageUpdated', message)
+      ack?.()
+    })
+
+    socket.on('userTyping', () => {
+      const user = requireUser()
+      if (!user) return
+      // toOthers, not to(): the typist already knows they are typing.
+      socket.to(user.room).emit('userTyping', { username: user.username })
     })
 
     socket.on('disconnect', () => {

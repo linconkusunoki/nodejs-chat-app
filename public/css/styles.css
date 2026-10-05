@@ -361,6 +361,15 @@ button:disabled {
   padding: 0 24px;
 }
 
+.typing {
+  width: min(100%, var(--thread-w));
+  margin: 0 auto;
+  padding: 0 24px;
+  min-height: 18px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+
 /* Messages */
 
 .msg {
@@ -368,6 +377,166 @@ button:disabled {
   grid-template-columns: 28px minmax(0, 1fr);
   gap: 12px;
   margin-bottom: 4px;
+  position: relative;
+}
+
+/* Overlaid rather than added to the grid: the two-column layout plus the
+   right-aligned own-message header leave no third column to put it in. */
+.msg__tools {
+  position: absolute;
+  top: -4px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.msg:not(.msg--own) .msg__tools {
+  right: 0;
+}
+
+.msg--own .msg__tools {
+  left: 0;
+}
+
+.msg:hover .msg__tools,
+.msg:focus-within .msg__tools {
+  opacity: 1;
+}
+
+/* No hover on touch, so the control has to be visible already. */
+@media (hover: none) {
+  .msg__tools {
+    opacity: 1;
+  }
+}
+
+.msg__tool {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.msg__tool:hover {
+  background: var(--bg-input);
+  color: var(--text);
+}
+
+.msg__tool svg {
+  width: 15px;
+  height: 15px;
+}
+
+.msg__icon-done {
+  display: none;
+  color: var(--brand);
+}
+
+.msg__tool.is-copied .msg__icon-copy {
+  display: none;
+}
+
+.msg__tool.is-copied .msg__icon-done {
+  display: block;
+}
+
+.msg__edited {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  margin-left: 6px;
+}
+
+.msg__edit {
+  width: 100%;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.6;
+  color: inherit;
+  background: var(--bg-input);
+  border: 1px solid var(--brand);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+.msg__tool--danger:hover {
+  color: #d93025;
+  border-color: #d93025;
+}
+
+.msg__reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.msg--own .msg__reactions {
+  justify-content: flex-end;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.chip--mine {
+  border-color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+}
+
+.chip__count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.chip--add {
+  color: var(--text-faint);
+  padding: 2px 9px;
+}
+
+.msg__picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-top: 6px;
+  padding: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: fit-content;
+}
+
+.msg--own .msg__picker {
+  margin-left: auto;
+}
+
+.msg__emoji {
+  font-size: 17px;
+  line-height: 1;
+  padding: 4px 6px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.msg__emoji:hover {
+  background: var(--bg-input);
 }
 
 .msg:not(.msg--grouped) {
@@ -431,10 +600,35 @@ button:disabled {
   margin-bottom: 18px;
 }
 
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 22px 0 18px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
 /* Composer */
 
 .compose {
   padding: 8px 24px 24px;
+}
+
+.counter {
+  text-align: right;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  padding-top: 6px;
 }
 
 .compose form {
