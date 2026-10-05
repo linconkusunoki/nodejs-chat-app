@@ -51,6 +51,21 @@ const nextEvent = <T>(socket: Socket, event: string) =>
     setTimeout(() => reject(new Error(`no '${event}' received`)), 5000)
   })
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+// Replay arrives as a burst, so a `once` listener is the wrong shape: two of
+// them would both fire on the first message. Buffer, then wait for a count.
+const collectMessages = (socket: Socket) => {
+  const messages: ChatMessage[] = []
+  socket.on('message', (message: ChatMessage) => void messages.push(message))
+  return messages
+}
+
+const waitForMessages = async (messages: ChatMessage[], count: number) => {
+  for (let attempt = 0; attempt < 200 && messages.length < count; attempt++) await sleep(25)
+  assert.ok(messages.length >= count, `expected ${count} messages, got ${messages.length}`)
+}
+
 before(startServer)
 after(() => server?.kill())
 
@@ -123,6 +138,60 @@ test('empty and oversized messages are rejected', async (t) => {
 
   assert.match(await emitError(alice, 'sendMessage', '   '), /cannot be empty/)
   assert.match(await emitError(alice, 'sendMessage', 'x'.repeat(1001)), /fewer/)
+})
+
+test('a late joiner receives the room history', async (t) => {
+  const alice = await connect()
+  const bob = await connect()
+  t.after(() => [alice, bob].forEach((s) => s.close()))
+
+  await emit(alice, 'join', { username: 'alice', room: 'history-room' })
+  await emit(alice, 'sendMessage', 'first')
+  await emit(alice, 'sendMessage', 'second')
+
+  const replayed = collectMessages(bob)
+  await emit(bob, 'join', { username: 'bob', room: 'history-room' })
+  await waitForMessages(replayed, 2)
+
+  assert.deepStrictEqual(
+    replayed.slice(0, 2).map((message) => message.text),
+    ['first', 'second']
+  )
+})
+
+test('history is capped and drops the oldest messages', async (t) => {
+  const alice = await connect()
+  const bob = await connect()
+  t.after(() => [alice, bob].forEach((s) => s.close()))
+
+  await emit(alice, 'join', { username: 'alice', room: 'cap-room' })
+  for (let i = 0; i < 105; i++) await emit(alice, 'sendMessage', `m${i}`)
+
+  const replayed = collectMessages(bob)
+  await emit(bob, 'join', { username: 'bob', room: 'cap-room' })
+  // 100 replayed messages plus the "Welcome" system line the join handler adds.
+  await waitForMessages(replayed, 101)
+  await sleep(100)
+
+  const history = replayed.slice(0, 100)
+  assert.strictEqual(history[0]?.text, 'm5')
+  assert.strictEqual(history[99]?.text, 'm104')
+  assert.strictEqual(replayed[100]?.text, 'Welcome')
+})
+
+test('every message carries a unique id', async (t) => {
+  const alice = await connect()
+  t.after(() => alice.close())
+
+  await emit(alice, 'join', { username: 'alice', room: 'id-room' })
+
+  const first = nextEvent<ChatMessage>(alice, 'message')
+  await emit(alice, 'sendMessage', 'one')
+  const second = nextEvent<ChatMessage>(alice, 'message')
+  await emit(alice, 'sendMessage', 'two')
+
+  assert.ok((await first).id)
+  assert.notStrictEqual((await first).id, (await second).id)
 })
 
 test('/health returns 200', async () => {

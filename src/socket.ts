@@ -1,7 +1,7 @@
 import { Server } from 'socket.io'
 import { Filter } from 'bad-words'
 import { addUser, getUser, getUsersInRoom, removeUser } from './utils/users.ts'
-import { generateMessage } from './utils/messages.ts'
+import { addMessage, generateMessage, getRoomHistory } from './utils/messages.ts'
 import { MAX_MESSAGE_LENGTH } from './types.ts'
 import type { RoomUser } from './types.ts'
 
@@ -11,6 +11,15 @@ const roomPayload = (room: string) => ({
   room,
   users: getUsersInRoom(room).map(({ username }) => ({ username })),
 })
+
+// Only user messages are replayed to newcomers: system lines ("x has left")
+// refer to a presence that already changed, so replaying them is just noise.
+const broadcast = (io: Server, room: string, username: string, text: string) => {
+  const message = generateMessage(username, text)
+  addMessage(room, message)
+  io.to(room).emit('message', message)
+  return message
+}
 
 export const registerSocketHandlers = (io: Server) => {
   io.on('connection', (socket) => {
@@ -37,6 +46,7 @@ export const registerSocketHandlers = (io: Server) => {
       const { user } = result
       socket.join(user.room)
 
+      for (const message of getRoomHistory(user.room)) socket.emit('message', message)
       socket.emit('message', generateMessage('Admin', 'Welcome'))
       socket.broadcast
         .to(user.room)
@@ -57,7 +67,7 @@ export const registerSocketHandlers = (io: Server) => {
         return ack?.(`Message must be ${MAX_MESSAGE_LENGTH} characters or fewer!`)
       if (filter.isProfane(text)) return ack?.('Profanity is not allowed!')
 
-      io.to(user.room).emit('message', generateMessage(user.username, text))
+      broadcast(io, user.room, user.username, text)
       ack?.()
     })
 
