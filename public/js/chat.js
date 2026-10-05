@@ -13,9 +13,38 @@ const $thread = document.querySelector('#thread')
 const $typing = document.querySelector('#typing')
 const $sidebar = document.querySelector('#sidebar')
 const $status = document.querySelector('#status')
+const baseTitle = document.title
 
 // Render's free tier spins the instance down after 15 minutes idle, so the
 // socket can drop mid-conversation. Show it rather than looking frozen.
+// Unread tracking. document.hidden is the signal: it covers a backgrounded tab
+// and a minimised window without needing a focus-tracking hack, and the
+// server has no idea any of this happened.
+let unread = 0
+
+const resetUnread = () => {
+  unread = 0
+  document.title = baseTitle
+}
+
+document.addEventListener('visibilitychange', () => !document.hidden && resetUnread())
+window.addEventListener('focus', resetUnread)
+
+// Browsers only grant Notification from a user gesture, so ask on the first one
+// rather than on page load where the request is silently ignored.
+if ('Notification' in window && Notification.permission === 'default') {
+  document.addEventListener('click', () => void Notification.requestPermission(), { once: true })
+}
+
+const notifyUnread = (message) => {
+  unread += 1
+  document.title = `(${unread}) ${baseTitle}`
+
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification(message.username, { body: message.text })
+  }
+}
+
 const setStatus = (text) => {
   $status.textContent = text || ''
   $status.hidden = !text
@@ -119,6 +148,10 @@ socket.on('message', (message) => {
       })
 
   $thread.insertAdjacentHTML('beforeend', html)
+
+  // Only other people's messages while the tab is out of sight count as
+  // unread; your own and the system lines would be noise in the count.
+  if (document.hidden && !isSystem && author !== username) notifyUnread(message)
 
   // System lines break the run so the next message gets a fresh header.
   previousAuthor = isSystem ? null : author
