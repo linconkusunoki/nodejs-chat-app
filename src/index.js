@@ -2,10 +2,11 @@ const app = require('./app')
 const port = process.env.PORT || 3000
 const http = require('http')
 const server = http.createServer(app)
-const socketio = require('socket.io')
-const Filter = require('bad-words')
-const io = socketio(server)
+const { Server } = require('socket.io')
+const { Filter } = require('bad-words')
+const io = new Server(server)
 const { generateMessage } = require('./utils/messages')
+const filter = new Filter()
 const {
   addUser,
   removeUser,
@@ -37,7 +38,6 @@ io.on('connection', (socket) => {
   })
 
   socket.on('sendMessage', (message, callback) => {
-    const filter = new Filter()
     const user = getUser(socket.id)
 
     if (filter.isProfane(message)) {
