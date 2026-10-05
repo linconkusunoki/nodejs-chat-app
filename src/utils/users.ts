@@ -8,20 +8,26 @@ export interface AddUserResult {
 }
 
 export const addUser = ({ id, username, room }: RoomUser): AddUserResult => {
-  username = username.trim().toLowerCase()
-  room = room.trim().toLowerCase()
+  const name = username.trim().toLowerCase()
+  const normalizedRoom = room.trim().toLowerCase()
 
-  if (!username || !room) {
+  if (!name || !normalizedRoom) {
     return { error: 'Username and Room are required!' }
   }
 
-  const taken = users.some((user) => user.room === room && user.username === username)
+  // Drop any earlier entry for this socket. After a recovered reconnect the id
+  // can be unchanged, and a second entry would leave a ghost in the sidebar
+  // that removeUser would never clean up.
+  const existing = users.findIndex((user) => user.id === id)
+  const previous = existing === -1 ? undefined : users.splice(existing, 1)[0]
 
-  if (taken) {
+  if (users.some((user) => user.room === normalizedRoom && user.username === name)) {
+    // Rejoining under a name someone else holds must not evict their session.
+    if (previous) users.push(previous)
     return { error: 'Username is in use!' }
   }
 
-  const user = { id, username, room }
+  const user = { id, username: name, room: normalizedRoom }
   users.push(user)
   return { user }
 }

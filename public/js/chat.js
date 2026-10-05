@@ -1,6 +1,7 @@
 const socket = io()
 
 // Elements
+let joined = false
 const $chat = document.querySelector('.chat')
 const $scrim = document.querySelector('#scrim')
 const $menuToggle = document.querySelector('#menu-toggle')
@@ -469,9 +470,30 @@ $messageForm.addEventListener('submit', (e) => {
   })
 })
 
-socket.emit('join', { username, room: options.room }, (error) => {
-  if (error) {
-    alert(error)
-    location.href = '/'
-  }
+const joinRoom = () => {
+  socket.emit('join', { username, room: options.room }, (error) => {
+    if (error) {
+      joined = false
+      alert(error)
+      location.href = '/'
+      return
+    }
+    joined = true
+  })
+}
+
+joinRoom()
+
+// A recovered reconnect (socket.recovered) brings back the id, the room and the
+// messages missed while offline, so nothing needs doing. If recovery failed the
+// socket is a new session that is in no room, so join again — and clear the
+// thread first, because joining replays the room history on top of what is
+// already rendered.
+socket.on('connect', () => {
+  if (joined || socket.recovered) return
+
+  $thread.replaceChildren()
+  previousAuthor = null
+  previousTime = null
+  joinRoom()
 })

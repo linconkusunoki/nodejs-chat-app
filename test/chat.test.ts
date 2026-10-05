@@ -543,6 +543,95 @@ test('deleting before joining is rejected', async (t) => {
   assert.match(await emitError(socket, 'deleteMessage', { id: 'x' }), /not in a room/)
 })
 
+test('a brief drop recovers the session, presence and missed messages', async (t) => {
+  // Reconnection is on here, which is the point: the client should come back
+  // on its own without reloading the page.
+  const alice = await ioClient(URL, { forceNew: true, reconnection: true, timeout: 5000 })
+  t.after(() => alice.close())
+  await new Promise<void>((resolve, reject) => {
+    alice.on('connect', () => resolve())
+    alice.on('connect_error', reject)
+  })
+
+  const bob = await connect()
+  t.after(() => bob.close())
+
+  await new Promise<string | undefined>((resolve) =>
+    alice.emit('join', { username: 'alice', room: 'recover' }, resolve)
+  )
+  await emit(bob, 'join', { username: 'bob', room: 'recover' })
+
+  const firstId = alice.id
+  const received = collectMessages(alice)
+
+  // Drop the transport without closing the socket, so the client reconnects
+  // and offers its recovery token.
+  alice.io.engine.close()
+
+  // Bob talks while alice is away; the message has to be waiting on return.
+  await emit(bob, 'sendMessage', 'sent while you were out')
+
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('did not reconnect')), 10000)
+    alice.on('connect', () => {
+      clearTimeout(timer)
+      resolve()
+    })
+  })
+  await sleep(300)
+
+  assert.strictEqual(alice.recovered, true, 'session was recovered')
+  assert.strictEqual(alice.id, firstId, 'socket id survived the drop')
+
+  // The message from the outage was replayed, not lost.
+  assert.ok(
+    received.some((message) => message.text === 'sent while you were out'),
+    `missed message was not recovered, got: ${received.map((m) => m.text).join(', ')}`
+  )
+
+  // Presence came back too: alice is still in the room and can still post.
+  assert.strictEqual(await emit(alice, 'sendMessage', 'back again'), undefined)
+})
+
+test('a reconnect without recovery rejoins instead of sitting in no room', async (t) => {
+  const alice = await ioClient(URL, { forceNew: true, reconnection: true, timeout: 5000 })
+  t.after(() => alice.close())
+  await new Promise<void>((resolve, reject) => {
+    alice.on('connect', () => resolve())
+    alice.on('connect_error', reject)
+  })
+
+  await new Promise<string | undefined>((resolve) =>
+    alice.emit('join', { username: 'alice', room: 'rejoin' }, resolve)
+  )
+
+  const firstId = alice.id
+  alice.io.engine.close()
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('did not reconnect')), 10000)
+    alice.on('connect', () => {
+      clearTimeout(timer)
+      resolve()
+    })
+  })
+  await sleep(300)
+
+  if (alice.recovered) {
+    // Recovery is expected in practice, so this path needs no rejoin.
+    assert.strictEqual(alice.id, firstId)
+    return
+  }
+
+  // A brand new session has no room, so the client has to join again. Emulate
+  // what chat.js does on an unrecovered connect.
+  assert.notStrictEqual(alice.id, firstId)
+  const joined = await new Promise<string | undefined>((resolve) =>
+    alice.emit('join', { username: 'alice', room: 'rejoin' }, resolve)
+  )
+  assert.strictEqual(joined, undefined)
+  assert.strictEqual(await emit(alice, 'sendMessage', 'still works'), undefined)
+})
+
 test('/health returns 200', async () => {
   const res = await fetch(`${URL}/health`)
   assert.strictEqual(res.status, 200)

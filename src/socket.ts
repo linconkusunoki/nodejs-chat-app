@@ -52,6 +52,17 @@ const findOwnMessage = (user: RoomUser, id: unknown) => {
 
 export const registerSocketHandlers = (io: Server) => {
   io.on('connection', (socket) => {
+    // Recovery restores the id, the rooms and socket.data, but not this app's
+    // presence store, and disconnect already announced the user as gone. Put
+    // them back in the room and in the sidebar.
+    if (socket.recovered && socket.data.user) {
+      const result = addUser({ id: socket.id, ...socket.data.user })
+      if (result.user) {
+        socket.join(result.user.room)
+        io.to(result.user.room).emit('roomData', roomPayload(result.user.room))
+      }
+    }
+
     // Every event needs the sender to still be in a room; without this a
     // disconnect race throws and takes the whole process down.
     const requireUser = (): RoomUser | undefined => getUser(socket.id)
@@ -74,6 +85,9 @@ export const registerSocketHandlers = (io: Server) => {
 
       const { user } = result
       socket.join(user.room)
+      // socket.data survives a recovered reconnect, which is how presence is
+      // restored above.
+      socket.data.user = { username: user.username, room: user.room }
 
       for (const message of getRoomHistory(user.room)) socket.emit('message', message)
       socket.emit('message', generateMessage('Admin', 'Welcome'))
