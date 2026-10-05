@@ -113,6 +113,29 @@ const evaluate = async (sessionId, expression) => {
   return { value: result?.result?.value }
 }
 
+// A real mouse move, so :hover actually applies. Emulating it through
+// addEventListener would pass while the CSS was still wrong.
+const moveMouse = async (sessionId, x, y) => {
+  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, sessionId)
+  await sleep(250)
+}
+
+const hover = async (sessionId, selector) => {
+  const box = (
+    await evaluate(
+      sessionId,
+      `(() => { const el = document.querySelector(${JSON.stringify(selector)});
+         if (!el) return null;
+         const r = el.getBoundingClientRect();
+         return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`
+    )
+  ).value
+  if (!box) return
+  await moveMouse(sessionId, box.x, box.y)
+}
+
+const unhover = (sessionId) => moveMouse(sessionId, 2, 2)
+
 const alice = await newPage(`${APP}/chat.html?room=smoke&username=alice`)
 const bob = await newPage(`${APP}/chat.html?room=smoke&username=bob`)
 
@@ -359,6 +382,50 @@ await sleep(400)
 const injected = await evaluate(alice, `document.querySelectorAll('.msg script').length`)
 check('no script injected via message text', injected.value === 0, `got ${injected.value}`)
 
+// --- reactions row and message tools reveal on hover
+const opacityOf = (sessionId, selector) =>
+  evaluate(
+    sessionId,
+    `getComputedStyle(document.querySelector(${JSON.stringify(selector)})).opacity`
+  )
+
+const HOVER_TARGET = '[data-id]'
+await unhover(alice)
+check(
+  'reactions row hidden when not hovered',
+  (await opacityOf(alice, '.msg [data-reactions]')).value === '0',
+  JSON.stringify(await opacityOf(alice, '.msg [data-reactions]'))
+)
+check('tools hidden when not hovered', (await opacityOf(alice, '.msg .msg__tools')).value === '0')
+
+await hover(alice, HOVER_TARGET)
+check(
+  'reactions row visible on hover',
+  (await opacityOf(alice, '.msg [data-reactions]')).value === '1',
+  JSON.stringify(await opacityOf(alice, '.msg [data-reactions]'))
+)
+check('tools visible on hover', (await opacityOf(alice, '.msg .msg__tools')).value === '1')
+
+// opacity rather than display, so revealing must not move the message below it.
+const geometry = await evaluate(
+  alice,
+  `(() => { const m = document.querySelector('.msg');
+     const r = m.querySelector('[data-reactions]').getBoundingClientRect();
+     return { height: r.height > 0, overflows: r.bottom <= m.getBoundingClientRect().bottom + 1 } })()`
+)
+check(
+  'hidden reactions row keeps its height',
+  geometry.value?.height === true,
+  JSON.stringify(geometry)
+)
+check(
+  'revealing does not reflow the message',
+  geometry.value?.overflows === true,
+  JSON.stringify(geometry)
+)
+
+await unhover(alice)
+
 // --- edit / delete controls are only on your own messages.
 // bob has two own messages by now ('hello from bob' and the xss-check 'hi'), so
 // always target the last one explicitly rather than relying on order.
@@ -572,9 +639,43 @@ check('no uncaught page exceptions', errors.length === 0, `${errors.length} thro
 const failed = results.filter((r) => !r.pass)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 
-ws.close()
-chrome.kill()
-server.kill()
+// Bounded, so a browser or server that will not shut down cannot leave this
+// running forever. Not unref'd: the timer is what guarantees cleanup.
+const cleanup = () => {
+  try {
+    ws.close()
+  } catch {
+    /* already closed */
+  }
+  try {
+    chrome.kill()
+  } catch {
+    /* already gone */
+  }
+  try {
+    server.kill()
+  } catch {
+    /* already gone */
+  }
+  rmSync(profile, { recursive: true, force: true })
+}
+
+const timer = setTimeout(() => {
+  cleanup()
+  process.exit(failed.length ? 1 : 0)
+}, 2000)
+
+process.on('exit', cleanup)
+process.on('SIGINT', () => {
+  clearTimeout(timer)
+  cleanup()
+  process.exit(130)
+})
+process.on('SIGTERM', () => {
+  clearTimeout(timer)
+  cleanup()
+  process.exit(143)
+})
 
 // Wait for Chrome to actually exit before removing its profile, otherwise the
 // directory is still being written to and the remove fails with ENOTEMPTY.

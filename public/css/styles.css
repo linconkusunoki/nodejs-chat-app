@@ -404,13 +404,6 @@ button:disabled {
   opacity: 1;
 }
 
-/* No hover on touch, so the control has to be visible already. */
-@media (hover: none) {
-  .msg__tools {
-    opacity: 1;
-  }
-}
-
 .msg__tool {
   display: grid;
   place-items: center;
@@ -472,11 +465,20 @@ button:disabled {
   border-color: #d93025;
 }
 
+/* Same reveal-on-hover treatment as .msg__tools. opacity rather than display so
+   the row keeps its height and hovering never reflows the thread. */
 .msg__reactions {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 6px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.msg:hover .msg__reactions,
+.msg:focus-within .msg__reactions {
+  opacity: 1;
 }
 
 .msg--own .msg__reactions {
@@ -665,6 +667,14 @@ button:disabled {
   outline: none;
   box-shadow: none;
   border-color: transparent;
+}
+
+/* No hover on touch, so the reveal-on-hover controls have to be visible already. */
+@media (hover: none) {
+  .msg__tools,
+  .msg__reactions {
+    opacity: 1;
+  }
 }
 
 /* Mobile: rail becomes a drawer behind a hamburger */
