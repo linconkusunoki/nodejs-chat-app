@@ -10,6 +10,7 @@ const filter = new Filter()
 const roomPayload = (room: string) => ({
   room,
   users: getUsersInRoom(room).map(({ username }) => ({ username })),
+  maxMessageLength: MAX_MESSAGE_LENGTH,
 })
 
 // Only user messages are replayed to newcomers: system lines ("x has left")

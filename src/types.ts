@@ -25,6 +25,9 @@ export interface ChatMessage {
 export interface RoomData {
   room: string
   users: RoomUserView[]
+  // Sent to the client so the composer's maxlength and counter cannot drift
+  // from the limit the server actually enforces.
+  maxMessageLength: number
 }
 
 export type AckError = string | undefined

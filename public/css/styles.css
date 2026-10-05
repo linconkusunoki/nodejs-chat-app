@@ -463,6 +463,14 @@ button:disabled {
   padding: 8px 24px 24px;
 }
 
+.counter {
+  text-align: right;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  padding-top: 6px;
+}
+
 .compose form {
   width: min(100%, var(--thread-w));
   margin: 0 auto;

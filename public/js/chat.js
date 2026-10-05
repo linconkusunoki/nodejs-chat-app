@@ -8,6 +8,7 @@ const $roomTitle = document.querySelector('#room-title')
 const $messageForm = document.querySelector('#message-form')
 const $messageFormInput = $messageForm.querySelector('input')
 const $messageFormButton = $messageForm.querySelector('button')
+const $counter = document.querySelector('#counter')
 const $messages = document.querySelector('#messages')
 const $thread = document.querySelector('#thread')
 const $typing = document.querySelector('#typing')
@@ -187,7 +188,7 @@ socket.on('message', (message) => {
   autoScroll()
 })
 
-socket.on('roomData', ({ room: roomName, users }) => {
+socket.on('roomData', ({ room: roomName, users, maxMessageLength }) => {
   const html = Mustache.render(sidebarTemplate, {
     room: roomName,
     initial: initials(roomName),
@@ -200,6 +201,20 @@ socket.on('roomData', ({ room: roomName, users }) => {
   })
   $sidebar.innerHTML = html
   $roomTitle.textContent = roomName
+
+  // The native maxlength does the enforcing; the counter is just the warning
+  // shot. Both read the same server value so they cannot disagree.
+  $messageFormInput.maxLength = maxMessageLength
+  $counter.hidden = false
+})
+
+// Only worth showing once the limit is close enough to matter.
+const COUNTER_THRESHOLD = 100
+
+$messageFormInput.addEventListener('input', () => {
+  const remaining = $messageFormInput.maxLength - $messageFormInput.value.length
+  $counter.textContent = String(remaining)
+  $counter.hidden = remaining > COUNTER_THRESHOLD
 })
 
 // Typing indicator. The client throttles its own emits and the server only

@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { io as ioClient, type Socket } from 'socket.io-client'
 import type { ChatMessage, RoomData } from '../src/types.ts'
+import { MAX_MESSAGE_LENGTH } from '../src/types.ts'
 
 const PORT = 4123
 const URL = `http://localhost:${PORT}`
@@ -228,6 +229,18 @@ test('userTyping from a socket that never joined is ignored', async (t) => {
 
   // No room for the orphan, so there is nothing to broadcast into.
   await expectNoEvent(alice, 'userTyping')
+})
+
+test('roomData carries the message limit for the composer', async (t) => {
+  const alice = await connect()
+  t.after(() => alice.close())
+
+  const received = nextEvent<RoomData>(alice, 'roomData')
+  await emit(alice, 'join', { username: 'alice', room: 'limit-room' })
+
+  // The client sets maxlength and its counter from this, so a mismatch here
+  // would let the composer accept text the server then rejects.
+  assert.strictEqual((await received).maxMessageLength, MAX_MESSAGE_LENGTH)
 })
 
 test('/health returns 200', async () => {
