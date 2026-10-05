@@ -10,6 +10,7 @@
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --test test/*.test.ts",
+    "smoke": "node smoke.mjs",
     "lint": "oxlint && oxfmt --check .",
     "format": "oxfmt ."
   },
