@@ -69,6 +69,7 @@ document.addEventListener('keydown', (e) => {
 // Templates
 const messageTemplate = document.querySelector('#message-template').innerHTML
 const systemTemplate = document.querySelector('#system-template').innerHTML
+const dividerTemplate = document.querySelector('#divider-template').innerHTML
 const sidebarTemplate = document.querySelector('#sidebar-template').innerHTML
 
 // Options
@@ -127,10 +128,37 @@ const autoScroll = () => {
 }
 
 let previousAuthor = null
+let previousTime = null
+
+// A run from the same author breaks if the conversation paused, otherwise a
+// 40-minute gap still renders as one continuous block with no timestamps.
+const GROUP_GAP = 5 * 60 * 1000
+
+const dayKey = (ts) => {
+  const date = new Date(ts)
+  date.setHours(0, 0, 0, 0)
+  return date.getTime()
+}
+
+const dayLabel = (ts) => {
+  const days = Math.round((dayKey(Date.now()) - dayKey(ts)) / 86400000)
+  if (days === 0) return 'Today'
+  if (days === 1) return 'Yesterday'
+  return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+}
 
 socket.on('message', (message) => {
   const author = message.username.toLowerCase()
   const isSystem = author === ADMIN
+  const newDay = previousTime === null || dayKey(message.createdAt) !== dayKey(previousTime)
+  const stale = previousTime !== null && message.createdAt - previousTime > GROUP_GAP
+
+  if (newDay) {
+    $thread.insertAdjacentHTML(
+      'beforeend',
+      Mustache.render(dividerTemplate, { label: dayLabel(message.createdAt) })
+    )
+  }
 
   const html = isSystem
     ? Mustache.render(systemTemplate, { message: message.text })
@@ -140,7 +168,7 @@ socket.on('message', (message) => {
         initials: initials(author),
         hue: hue(author),
         own: author === username,
-        grouped: author === previousAuthor,
+        grouped: author === previousAuthor && !stale && !newDay,
         createdAt: new Date(message.createdAt).toLocaleTimeString([], {
           hour: 'numeric',
           minute: '2-digit',
@@ -155,6 +183,7 @@ socket.on('message', (message) => {
 
   // System lines break the run so the next message gets a fresh header.
   previousAuthor = isSystem ? null : author
+  previousTime = message.createdAt
   autoScroll()
 })
 

@@ -440,6 +440,23 @@ button:disabled {
   margin-bottom: 18px;
 }
 
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 22px 0 18px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
 /* Composer */
 
 .compose {
