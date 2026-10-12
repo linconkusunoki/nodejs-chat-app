@@ -420,6 +420,21 @@ check(
   (await opacityOf(alice, '.msg .chip--add')).value === '0'
 )
 
+// The badge hangs off the bubble's bottom corner; while a reaction is applied
+// the body reserves padding so the badge stays inside the message box.
+const badgeBox = await evaluate(
+  alice,
+  `(() => { const m = document.querySelector('.msg');
+     const b = m.querySelector('.chip[data-reaction]').getBoundingClientRect();
+     const body = m.querySelector('.msg__body').getBoundingClientRect();
+     return { inside: b.bottom <= body.bottom + 1 && b.top >= body.top - 1 } })()`
+)
+check(
+  'applied badge fits in the reserved space',
+  badgeBox.value?.inside === true,
+  JSON.stringify(badgeBox)
+)
+
 // And it survives the pointer moving right over it.
 await hover(alice, '.msg .chip[data-reaction]')
 await unhover(bob)
@@ -471,6 +486,13 @@ check(
 )
 check('tools hidden when not hovered', (await opacityOf(alice, '.msg .msg__tools')).value === '0')
 
+// The reactions row is an overlay on the bubble corner, not an in-flow row, so
+// the message height is captured at rest and must not change once revealed.
+const heightAtRest = await evaluate(
+  alice,
+  `document.querySelector('.msg').getBoundingClientRect().height`
+)
+
 await hover(alice, '[data-id]')
 check(
   'add-reaction button visible on hover',
@@ -479,23 +501,23 @@ check(
 )
 check('tools visible on hover', (await opacityOf(alice, '.msg .msg__tools')).value === '1')
 
-// opacity rather than display, so revealing must not move the message below it.
+// opacity rather than display, so the hidden button still has a real box and
+// revealing it must not resize the message.
 const addGeometry = await evaluate(
   alice,
   `(() => { const m = document.querySelector('.msg');
      const r = m.querySelector('.chip--add').getBoundingClientRect();
-     return { height: r.height > 0,
-              inside: r.bottom <= m.getBoundingClientRect().bottom + 1 } })()`
+     return { height: r.height > 0, msgHeight: m.getBoundingClientRect().height } })()`
 )
 check(
-  'hidden add button keeps its height',
+  'hidden add button keeps its box',
   addGeometry.value?.height === true,
   JSON.stringify(addGeometry)
 )
 check(
   'revealing the add button does not reflow',
-  addGeometry.value?.inside === true,
-  JSON.stringify(addGeometry)
+  addGeometry.value?.msgHeight === heightAtRest.value,
+  `${heightAtRest.value} -> ${addGeometry.value?.msgHeight}`
 )
 
 await unhover(alice)

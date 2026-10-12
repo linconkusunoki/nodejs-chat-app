@@ -94,9 +94,11 @@
             {{/own}}
             <time class="msg__time">{{ createdAt }}</time>
           </div>
-          <div class="msg__text">{{ message }}</div>
-          <span class="msg__edited" data-edited hidden>edited</span>
-          <div class="msg__reactions" data-reactions></div>
+          <div class="msg__bubble">
+            <div class="msg__text">{{ message }}</div>
+            <span class="msg__edited" data-edited hidden>edited</span>
+            <div class="msg__reactions" data-reactions></div>
+          </div>
           <div class="msg__picker" data-picker hidden></div>
         </div>
         <div class="msg__tools">

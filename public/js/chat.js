@@ -208,14 +208,21 @@ const deleteMessage = (article) => {
   })
 }
 
-// Chips are built in JS rather than in the Mustache template because they
+// Badges are built in JS rather than in the Mustache template because they
 // change without the message itself changing, and the emoji list only arrives
 // with roomData — after the first messages have already rendered.
 const renderReactions = (message) => {
-  const row = findMessageEl(message.id)?.querySelector('[data-reactions]')
+  const article = findMessageEl(message.id)
+  const row = article?.querySelector('[data-reactions]')
   if (!row) return
 
-  const chips = (message.reactions ?? []).map((reaction) => {
+  const reactions = message.reactions ?? []
+
+  // The badges hang off the bubble's bottom corner, so the body only reserves
+  // room for them while something is actually applied.
+  article.querySelector('.msg__body')?.classList.toggle('has-reactions', reactions.length > 0)
+
+  const chips = reactions.map((reaction) => {
     const mine = reaction.usernames.includes(username)
     const who = escapeAttr(reaction.usernames.join(', '))
     return (
